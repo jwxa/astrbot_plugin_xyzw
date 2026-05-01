@@ -1,0 +1,84 @@
+{
+  "sidecar_base_url": {
+    "description": "XYZW Node sidecar 服务地址",
+    "hint": "AstrBot 容器需要能访问到该地址；默认值仅适用于 sidecar 与 AstrBot 在同一网络命名空间运行的场景。",
+    "type": "string",
+    "default": "http://127.0.0.1:8099"
+  },
+  "request_timeout": {
+    "description": "调用 sidecar 的超时时间（秒）",
+    "type": "int",
+    "default": 15,
+    "min": 3,
+    "max": 120
+  },
+  "default_notify_mode": {
+    "description": "默认通知策略",
+    "hint": "当前实现固定优先群广播；此配置主要用于初始化兼容。",
+    "type": "string",
+    "options": [
+      "group_broadcast",
+      "private_only"
+    ],
+    "default": "group_broadcast"
+  },
+  "allow_private_fallback": {
+    "description": "群广播失败时是否降级为私聊",
+    "type": "bool",
+    "default": true
+  },
+  "binding_private_only": {
+    "description": "账号绑定等敏感操作是否仅允许私聊",
+    "type": "bool",
+    "default": true
+  },
+  "scheduler_poll_interval_seconds": {
+    "description": "后台巡检循环的轮询间隔（秒）",
+    "type": "int",
+    "default": 60,
+    "min": 30,
+    "max": 600
+  },
+  "car_reminder_default_interval_minutes": {
+    "description": "收车提醒的默认检查间隔（分钟）",
+    "type": "int",
+    "default": 15,
+    "min": 5,
+    "max": 720
+  },
+  "car_reminder_check_timeout_ms": {
+    "description": "收车提醒查询车辆状态时调用 sidecar 的超时（毫秒）",
+    "type": "int",
+    "default": 15000,
+    "min": 5000,
+    "max": 120000
+  },
+  "hangup_reminder_default_interval_minutes": {
+    "description": "挂机提醒的默认检查间隔（分钟）",
+    "type": "int",
+    "default": 15,
+    "min": 5,
+    "max": 720
+  },
+  "hangup_reminder_check_timeout_ms": {
+    "description": "挂机提醒查询账号状态时调用 sidecar 的超时（毫秒）",
+    "type": "int",
+    "default": 15000,
+    "min": 5000,
+    "max": 120000
+  },
+  "helper_member_reminder_default_interval_minutes": {
+    "description": "护卫成员提醒的默认检查间隔（分钟）",
+    "type": "int",
+    "default": 30,
+    "min": 5,
+    "max": 720
+  },
+  "daily_task_timeout_ms": {
+    "description": "定时日常执行时调用 sidecar 的超时（毫秒）",
+    "type": "int",
+    "default": 90000,
+    "min": 10000,
+    "max": 180000
+  }
+}

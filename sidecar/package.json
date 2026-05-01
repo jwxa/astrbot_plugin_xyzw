@@ -1,0 +1,15 @@
+{
+  "name": "astrbot-plugin-xyzw-sidecar",
+  "version": "0.12.0",
+  "private": true,
+  "type": "module",
+  "description": "XYZW AstrBot Node sidecar",
+  "scripts": {
+    "start": "node ./src/server.js",
+    "dev": "node ./src/server.js"
+  },
+  "dependencies": {
+    "lz4js": "^0.2.0",
+    "ws": "^8.18.3"
+  }
+}

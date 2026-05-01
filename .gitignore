@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local task tracking
+.codex-tasks/
+
+# Plugin runtime data
+sidecar/data/
+sidecar/*.log
+sidecar/node_modules/
+
+# Local verification records may contain account/group identifiers
+docs/VERIFICATION_STATUS.md
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
