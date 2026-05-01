@@ -1,0 +1,8 @@
+[submodule "_refs/AstrBot"]
+	path = _refs/AstrBot
+	url = https://github.com/AstrBotDevs/AstrBot.git
+	branch = master
+[submodule "_refs/xyzw_web_helper"]
+	path = _refs/xyzw_web_helper
+	url = https://github.com/jwxa/xyzw_web_helper.git
+	branch = feature/sidecar

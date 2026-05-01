@@ -42,8 +42,14 @@ astrbot_plugin_xyzw/
 
 ## 运行依赖
 
-- [AstrBot](./_refs/AstrBot.md)
-- [xyzw_web_helper](./_refs/xyzw_web_helper.md)
+- [AstrBot](./_refs/AstrBot)
+- [xyzw_web_helper](./_refs/xyzw_web_helper)
+
+获取仓库后建议执行：
+
+```bash
+git submodule update --init --recursive
+```
 
 ## 启动说明
 
