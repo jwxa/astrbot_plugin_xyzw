@@ -14,7 +14,6 @@ const MAX_MONTHLY_FISH_ITERATIONS = 40;
 const MAX_CAR_REFRESH_ATTEMPTS = 12;
 const RACING_REFRESH_TICKET_ITEM_ID = 35002;
 const CAR_PARTS_ITEM_ID = 35009;
-const SUPER_CAR_REFRESH_THRESHOLD = 1;
 const MAX_NEW_SMART_SEND_REFRESH_ATTEMPTS = 5;
 const BIG_PRIZES = [
   { type: 3, itemId: 3201, value: 10 },
@@ -204,11 +203,15 @@ function isBigPrize(rewards) {
   );
 }
 
-function shouldSendCar(carInfo, refreshTickets) {
+function shouldSendCar(carInfo, refreshTickets, options = {}) {
   const color = Number(carInfo?.color || 0);
   const rewards = Array.isArray(carInfo?.rewards) ? carInfo.rewards : [];
   const racingTicketsCount = countRacingRefreshTickets(rewards);
+  const superCarUnlocked = Boolean(options?.superCarUnlocked);
 
+  if (superCarUnlocked) {
+    return color >= 5 || racingTicketsCount >= 4 || isBigPrize(rewards);
+  }
   if (Number(refreshTickets || 0) >= 6) {
     return color >= 5 || racingTicketsCount >= 4 || isBigPrize(rewards);
   }
@@ -849,6 +852,7 @@ export async function runManualSmartCarSendTask(
 
   for (const initialCar of idleCars) {
     let refreshAttempts = 0;
+    let superCarRefreshAttempts = 0;
     let lastHelperId = 0;
     let lastHelperNote = "";
     let sent = false;
@@ -875,7 +879,11 @@ export async function runManualSmartCarSendTask(
       lastHelperId = helperDecision.helperId;
       lastHelperNote = helperDecision.helperNote;
 
-      if (shouldSendCar(currentCar, state.refreshTickets)) {
+      if (
+        shouldSendCar(currentCar, state.refreshTickets, {
+          superCarUnlocked: state.superCarUnlocked,
+        })
+      ) {
         const sendResult = await performSendWithRetry({
           client,
           carId: currentCar.id,
@@ -930,7 +938,7 @@ export async function runManualSmartCarSendTask(
         Boolean(state.superCarUnlocked) &&
         !freeRefresh &&
         !canUseTicketRefresh &&
-        refreshAttempts < SUPER_CAR_REFRESH_THRESHOLD;
+        superCarRefreshAttempts < MAX_NEW_SMART_SEND_REFRESH_ATTEMPTS;
 
       if (
         refreshAttempts >= MAX_NEW_SMART_SEND_REFRESH_ATTEMPTS ||
@@ -1014,6 +1022,9 @@ export async function runManualSmartCarSendTask(
       }
 
       refreshAttempts += 1;
+      if (!freeRefresh && !canUseTicketRefresh && canUseSuperCarRefresh) {
+        superCarRefreshAttempts += 1;
+      }
       await sleep(500);
       state = await refreshSmartCarContext(client, timeoutMs);
     }
@@ -1029,6 +1040,8 @@ export async function runManualSmartCarSendTask(
     superCarExpireTime: state.superCarExpireTime || 0,
     superCarRemainingSeconds: state.superCarRemainingSeconds || 0,
     helperWhitelist: Array.isArray(helper_whitelist) ? helper_whitelist : [],
+    helperSummary: state.helperSnapshot?.summary || {},
+    currentRole: state.helperSnapshot?.currentRole || {},
     before,
     after: state.overview,
     details,

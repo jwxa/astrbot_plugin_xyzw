@@ -37,7 +37,7 @@ class UserBindSessionFilter(SessionFilter):
     "astrbot_plugin_xyzw",
     "codex",
     "XYZW AstrBot 插件，采用 AstrBot + Node sidecar 架构。",
-    "0.21.1",
+    "0.21.2",
     "https://github.com/your-org/astrbot_plugin_xyzw",
 )
 class XyzwPlugin(Star):
@@ -604,7 +604,7 @@ class XyzwPlugin(Star):
 
     def _car_usage(self) -> str:
         return (
-            "车辆命令\n\n"
+            "赛车命令\n\n"
             "/xyzw 赛车\n"
             "/xyzw 赛车 查看 [别名或ID前缀]\n"
             "/xyzw 赛车 智能发车 [别名或ID前缀]\n"
@@ -614,10 +614,14 @@ class XyzwPlugin(Star):
             "/xyzw 赛车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
             "/xyzw 赛车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
             "/xyzw 赛车 收车 [别名或ID前缀]\n\n"
-            "兼容旧前缀: `/xyzw 车 ...` 仍可继续使用。\n"
             "说明: 品阶 >= 5 的车辆发车时必须提供护卫ID，低品级车辆可直接发车。\n"
             "发车时间限制: 仅周一至周三 06:00-20:00 可发车。\n"
-            "智能发车说明: 手动智能发车会同步执行独立 sidecar 逻辑，并优先使用当前账号配置的护卫白名单。"
+            "智能发车说明:\n"
+            "1. 只处理当前未发车的车辆，并按槽位从小到大逐辆判断。\n"
+            "2. 每辆车会先看当前奖励是否值得直接发车；命中高品车、较多刷新券或大奖奖励时会直接发。\n"
+            "3. 不满足直发条件时，会按顺序尝试刷新：先用刷新券，再用该车的免费刷新；若已开通超级跑车，再额外允许少量金砖刷新。\n"
+            "4. 单辆车最多刷新 5 次；每次刷新后都会重新拉最新车况、刷新券和护卫成员状态，再决定继续刷新还是直接发车。\n"
+            "5. 护卫会优先按当前账号配置的白名单顺序补位；白名单都满员时，会从可用护卫里随机选一个。"
         )
 
     def _daily_usage(self) -> str:
@@ -817,7 +821,7 @@ class XyzwPlugin(Star):
             method="GET",
             headers={
                 "Accept": "application/json, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "astrbot-plugin-xyzw/0.21.0",
+                "User-Agent": "astrbot-plugin-xyzw/0.21.2",
             },
         )
 
@@ -1568,14 +1572,22 @@ class XyzwPlugin(Star):
     ) -> str:
         details = result.get("details", []) or []
         helpers = result.get("helpers", []) or []
+        helper_summary = result.get("helperSummary", {}) or {}
+        current_role = result.get("currentRole", {}) or {}
         lines = [
             "智能发车结果",
             f"- 别名: {account.get('alias')}",
+            f"- 账号ID: {account.get('account_id', '')[:8]}",
+            f"- 当前角色ID: {current_role.get('roleId') or '-'}",
             f"- 处理车辆: {int(result.get('processedCount') or 0)}",
             f"- 发车前空闲: {int(result.get('idleCountBefore') or 0)}",
             f"- 发车后空闲: {int(result.get('idleCountAfter') or 0)}",
             f"- 刷新券: {int(result.get('refreshTicketsBefore') or 0)} -> {int(result.get('refreshTicketsAfter') or 0)}",
             f"- 超级跑车: {self._format_super_car_status_text(result)}",
+            f"- 护卫成员总数: {helper_summary.get('totalMembers', len(helpers))}",
+            f"- 护卫可用成员: {helper_summary.get('availableMembers', 0)}",
+            f"- 护卫已满成员: {helper_summary.get('exhaustedMembers', 0)}",
+            f"- 单成员上限: {helper_summary.get('maxUsagePerMember', 4)}",
         ]
 
         whitelist = result.get("helperWhitelist") or []
@@ -2009,7 +2021,7 @@ class XyzwPlugin(Star):
         return (
             "XYZW 助手\n\n"
             "当前可用命令:\n"
-            "/xyzw help\n"
+            "/xyzw 帮助\n"
             "/xyzw 健康\n"
             "/xyzw 计划\n"
             "/xyzw 架构\n"
@@ -2017,18 +2029,25 @@ class XyzwPlugin(Star):
             "/xyzw 账号\n"
             "/xyzw 状态 [别名或ID前缀]\n"
             "/xyzw 赛车 [查看] [别名或ID前缀]\n"
+            "/xyzw 赛车 智能发车 [别名或ID前缀]\n"
+            "/xyzw 赛车 智能发车 白名单 查看|设置|清空 ...\n"
             "/xyzw 赛车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
             "/xyzw 赛车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
             "/xyzw 赛车 收车 [别名或ID前缀]\n"
             "/xyzw 日常 [别名或ID前缀]\n"
             "/xyzw 副本 ...\n"
             "/xyzw 资源 ...\n"
-            "/xyzw 定时 ...\n"
+            "/xyzw 定时 查看\n"
+            "/xyzw 定时 答题 ...\n"
+            "/xyzw 定时 月度 ...\n"
+            "/xyzw 定时 赛车 ...\n"
             "/xyzw 通知 绑定本群\n"
+            "/xyzw 通知 模式 查看\n"
+            "/xyzw 通知 模式 设置 <群广播|仅私聊>\n"
             "/xyzw 通知 查看\n"
             "/xyzw 通知 解绑\n"
             "/xyzw 通知 测试\n\n"
-            "当前已实现: sidecar 健康检查、会话式 token 绑定、URL 绑定、BIN 导入绑定、多账号管理、默认账号切换、状态查询、车辆概览/护卫成员状态查询/发车/收车、简版日常、基础副本命令、基础资源命令、通知群绑定、收车提醒基础版、挂机提醒基础版、护卫成员提醒基础版、定时日常基础版、定时资源/副本执行基础版、活动开放提醒基础版、每周大冲关、月末月度任务提醒、月末钓鱼进度补齐、赛车禁发提醒、赛车智能发车、赛车夜间收车提醒、赛车主动收车。\n"
+            "当前已实现: sidecar 健康检查、会话式 token 绑定、URL 绑定、BIN 导入绑定、多账号管理、默认账号切换、状态查询、赛车概览/护卫成员查询/发车/收车/智能发车、智能发车护卫白名单、简版日常、基础副本命令、基础资源命令、通知群绑定、通知策略、收车提醒、挂机提醒、护卫成员提醒、定时日常、定时资源/副本执行、活动开放提醒、每周答题、月末月度任务提醒、月末钓鱼进度补齐、赛车禁发提醒、赛车定时智能发车、赛车夜间收车提醒、赛车定时收车。\n"
             "当前未实现: 批量任务、复杂副本编排。"
         )
 
@@ -2312,7 +2331,7 @@ class XyzwPlugin(Star):
 
     def _study_action_label(self, action: str) -> str:
         return {
-            "weekly_answer": "咸鱼大冲关",
+            "weekly_answer": "答题",
         }.get(str(action or "").strip(), str(action or "-"))
 
     def _monthly_action_label(self, action: str) -> str:
@@ -2325,7 +2344,7 @@ class XyzwPlugin(Star):
         return {
             "car_deadline_reminder": "禁发提醒",
             "car_claim_reminder": "收车提醒",
-            "car_claim_ready": "主动收车",
+            "car_claim_ready": "收车",
             "smart_send_car": "智能发车",
         }.get(str(action or "").strip(), str(action or "-"))
 
@@ -2476,7 +2495,7 @@ class XyzwPlugin(Star):
         result: dict[str, Any],
     ) -> str:
         lines = [
-            "咸鱼大冲关结果",
+            "答题结果",
             f"- 别名: {account.get('alias')}",
             f"- 题库: {int(result.get('questionBankSize') or 0)}",
             f"- 题目: {int(result.get('questionCount') or 0)}",
@@ -2590,7 +2609,7 @@ class XyzwPlugin(Star):
         result: dict[str, Any],
     ) -> str:
         lines = [
-            "主动收车结果",
+            "收车结果",
             f"- 别名: {account.get('alias')}",
             f"- 成功收取: {int(result.get('claimedCount') or 0)}",
             f"- 失败: {len(result.get('failures') or [])}",
@@ -3007,7 +3026,7 @@ class XyzwPlugin(Star):
 
         data = response.get("data", {}) or {}
         if data.get("alreadyCompleted"):
-            data["message"] = "本周咸鱼大冲关已完成，无需重复作答。"
+            data["message"] = "本周答题已完成，无需重复作答。"
             return {
                 "ok": True,
                 "status": "empty",
@@ -3023,7 +3042,7 @@ class XyzwPlugin(Star):
                 "data": data,
             }
 
-        data["message"] = "咸鱼大冲关已完成。"
+        data["message"] = "答题已完成。"
         return {
             "ok": True,
             "status": "success",
@@ -3248,15 +3267,15 @@ class XyzwPlugin(Star):
                 }
 
             if failures:
-                data["message"] = "主动收车已执行，但存在失败车辆。"
+                data["message"] = "收车已执行，但存在失败车辆。"
                 return {
                     "ok": False,
                     "status": "failed",
-                    "error_message": "主动收车存在失败项",
+                    "error_message": "收车存在失败项",
                     "data": data,
                 }
 
-            data["message"] = "主动收车已完成。"
+            data["message"] = "收车已完成。"
             return {
                 "ok": True,
                 "status": "success",
@@ -3412,9 +3431,9 @@ class XyzwPlugin(Star):
             "/xyzw 定时 赛车 收车提醒 开启 [HH:MM] [别名或ID前缀]\n"
             "/xyzw 定时 赛车 收车提醒 关闭 [别名或ID前缀]\n"
             "/xyzw 定时 赛车 收车提醒 执行 [别名或ID前缀]\n"
-            "/xyzw 定时 赛车 主动收车 开启 [HH:MM] [别名或ID前缀]\n"
-            "/xyzw 定时 赛车 主动收车 关闭 [别名或ID前缀]\n"
-            "/xyzw 定时 赛车 主动收车 执行 [别名或ID前缀]\n\n"
+            "/xyzw 定时 赛车 收车 开启 [HH:MM] [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 收车 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 收车 执行 [别名或ID前缀]\n\n"
             "/xyzw 定时 活动 查看\n"
             "/xyzw 定时 活动 开启 <梦境|宝库> [HH:MM]\n"
             "/xyzw 定时 活动 关闭 <梦境|宝库>\n\n"
@@ -3422,8 +3441,8 @@ class XyzwPlugin(Star):
             f"默认挂机提醒间隔: {self.hangup_reminder_default_interval_minutes} 分钟\n"
             f"默认护卫成员提醒间隔: {self.helper_member_reminder_default_interval_minutes} 分钟\n"
             "默认活动提醒时间: 00:00\n"
-            "说明: 答题默认按周一执行；月度任务固定在月末执行；赛车禁发提醒与智能发车固定在周一至周三生效；赛车收车提醒与主动收车默认每日 23:55。\n"
-            "通知渠道固定为群广播，请先使用 /xyzw 通知 绑定本群。"
+            "说明: 答题默认按周一执行；月度任务固定在月末执行；赛车提醒与智能发车固定在周一至周三 06:00-20:00 生效；赛车收车提醒与收车默认每日 23:55。\n"
+            "通知发送遵循 /xyzw 通知 模式；开启定时任务前请先使用 /xyzw 通知 绑定本群。"
         )
 
     def _format_duration_text(self, seconds: int | float | None) -> str:
@@ -7906,7 +7925,7 @@ class XyzwPlugin(Star):
                 if not schedule or not schedule.get("enabled"):
                     yield event.plain_result(
                         f"当前任务还未开启定时{category_label}，请先开启。\n"
-                        "/xyzw 定时 赛车 提醒|智能发车|收车提醒|主动收车 开启 ..."
+                        "/xyzw 定时 赛车 提醒|智能发车|收车提醒|收车 开启 ..."
                     )
                     return
 

@@ -1,6 +1,6 @@
 name: astrbot_plugin_xyzw
 display_name: XYZW 助手
-version: v0.21.0
+version: v0.21.2
 author: codex
 desc: 面向 QQ 场景的 XYZW AstrBot 插件，采用 AstrBot + Node sidecar 架构，默认群广播通知
 repo: https://github.com/jwxa/astrbot_plugin_xyzw
