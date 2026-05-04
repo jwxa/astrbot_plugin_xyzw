@@ -14,7 +14,7 @@
 ## 2. 核心原则
 
 - 用户关系模型固定为 `1 个 QQ 用户 -> 多个 XYZW token`
-- 通知策略固定为 `群广播`
+- 通知策略支持 `群广播 / 仅私聊`
 - 群聊推送目标必须由用户显式绑定，不能依赖“最后发过言的群”
 - 高风险操作默认保留私聊限制
 - 插件层不直接实现 XYZW 协议，统一走 sidecar
@@ -47,8 +47,8 @@ astrbot_plugin_xyzw              web adapter / web ui
 | 场景 | 默认策略 | 说明 |
 |---|---|---|
 | 群内用户查询/执行 | 当前群回复 | 被动消息 |
-| 定时提醒 | 绑定通知群内普通消息 | 主动消息 |
-| 执行结果推送 | 绑定通知群内普通消息 | 主动消息 |
+| 定时提醒 | `notify_mode=group_broadcast` 时发通知群；`private_only` 时发私聊 | 主动消息 |
+| 执行结果推送 | `notify_mode=group_broadcast` 时发通知群；`private_only` 时发私聊 | 主动消息 |
 | 群推送失败 | 可选降级私聊 | 由配置控制 |
 | 敏感操作 | 建议仅私聊 | 绑定、删号、默认账号切换、功法类 |
 
@@ -61,7 +61,7 @@ astrbot_plugin_xyzw              web adapter / web ui
 | `qq_user_id` | string | QQ 用户主键 |
 | `accounts` | list | 绑定的 XYZW 账号列表 |
 | `default_account_id` | string | 默认账号 |
-| `notify.mode` | string | 当前计划为 `group_broadcast` |
+| `notify.mode` | string | `group_broadcast` / `private_only` |
 | `notify.group.group_id` | string | 默认通知群 |
 | `notify.group.unified_msg_origin` | string | 兼容通用主动消息场景 |
 | `created_at` | string | 创建时间 |
@@ -78,6 +78,7 @@ astrbot_plugin_xyzw              web adapter / web ui
 | `role_name` | string | 角色名 |
 | `import_method` | string | `manual` / `url` / `bin` / `wx_qrcode` |
 | `source_url` | string | 本地 `refresh_url` 或外部来源地址；用于 token 失效后的自动刷新 |
+| `smart_car_settings.helper_whitelist` | list | 账号级智能发车护卫白名单 |
 | `is_default` | boolean | 是否默认账号 |
 | `created_at` | string | 创建时间 |
 
@@ -116,7 +117,7 @@ astrbot_plugin_xyzw              web adapter / web ui
 |---|---|---|
 | 状态总览 | 已实现基础版 | 当前已支持单账号摘要查询 |
 | 单账号日常 | 已实现增强版 | 当前为简版日常，已支持账号级配置 `招募次数/挂机领取次数/黑市购买次数/竞技场次数`，并补齐免费钓鱼、黑市与竞技场战斗链路 |
-| 车辆操作 | 已实现基础版 | 当前已支持车辆概览、护卫成员状态查询、单车发车和一键收车；发车命令支持可选 `护卫 <护卫ID>`，其中 `品阶 >= 5` 的车辆强制要求护卫，且仅周一至周三 `06:00-20:00` 允许发车 |
+| 车辆操作 | 已实现增强版 | 当前已支持车辆概览、护卫成员状态查询、单车发车、一键收车，以及 `/xyzw 赛车 智能发车` 独立 sidecar 流程；支持账号级护卫白名单、超级跑车有效期判断、单车重试和结果汇总 |
 | 副本执行 | 已实现基础版 | 当前支持宝库前3、宝库后2、梦境阵容切换、梦境金币商品购买、怪异塔状态、怪异塔免费道具、怪异塔用道具、怪异塔限次爬塔、换皮闯关状态、换皮补打、换皮单 Boss 挑战 |
 | 资源执行 | 已实现基础版 | 当前支持招募、免费钓鱼、木箱、珍宝阁免费、黑市采购、军团四圣碎片、每日礼包 |
 | 多账号批量 | 计划中 | 次期 |
@@ -131,6 +132,8 @@ astrbot_plugin_xyzw              web adapter / web ui
 | 活动开放提醒 | 已实现基础版 | 当前支持 `/xyzw 定时 活动 查看|开启|关闭`，首期支持梦境/宝库，按本地时间 `HH:MM` 每日最多提醒一次 |
 | 定时日常执行 | 已实现基础版 | 当前支持 `/xyzw 定时 日常 开启|关闭|执行`，按本地时间 `HH:MM` 触发 |
 | 定时副本/资源执行 | 已实现基础版 | 当前支持 `/xyzw 定时 资源|副本 查看|开启|关闭|执行`，复用现有 sidecar 动作并按 `HH:MM` 每日触发 |
+| 定时答题执行 | 已实现基础版 | 当前支持 `/xyzw 定时 答题 查看|开启|关闭|执行`，按周触发 |
+| 赛车专项定时 | 已实现增强版 | 当前支持禁发提醒、智能发车、夜间收车提醒、主动收车；定时智能发车已切到独立 sidecar 新逻辑 |
 | 执行结果汇总 | 已实现基础版 | 定时日常、定时资源、定时副本执行后会向绑定群广播结果摘要 |
 
 ## 7. sidecar API 草案
@@ -196,12 +199,12 @@ astrbot_plugin_xyzw              web adapter / web ui
 | `/xyzw 绑定` | 会话式绑定账号 | 已实现（当前支持 `token` / `url` / `bin` / `wx`） |
 | `/xyzw 账号` | 列表、切换、重命名、删除 | 已实现 |
 | `/xyzw 状态` | 查看摘要状态 | 已实现基础版 |
-| `/xyzw 车` | 查看车辆概览/护卫成员状态/执行发车/收车 | 已实现基础版（支持 `/xyzw 车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]`；发车支持可选护卫参数，高品级强制护卫） |
+| `/xyzw 赛车` | 查看车辆概览/护卫成员状态/执行发车/收车/智能发车 | 已实现增强版（支持 `/xyzw 赛车 护卫成员 ...`、`/xyzw 赛车 智能发车`、`/xyzw 赛车 智能发车 白名单 查看|设置|清空`；兼容旧前缀 `/xyzw 车`） |
 | `/xyzw 日常` | 执行常用日常与维护账号级日常配置 | 已实现增强版（支持 `/xyzw 日常 配置 查看|设置|重置`，当前可维护招募/挂机/黑市/竞技场次数） |
 | `/xyzw 资源` | 招募、钓鱼、开箱等资源动作 | 已实现基础版 |
 | `/xyzw 副本` | 宝库、梦境、怪异塔 | 已实现基础版 |
 | `/xyzw 通知 ...` | 绑定群、查看、测试 | M0 |
-| `/xyzw 定时 ...` | 任务增删改查 | 已实现基础版（当前支持收车提醒、挂机提醒、定时日常、活动开放提醒） |
+| `/xyzw 定时 ...` | 任务增删改查 | 已实现增强版（当前支持收车提醒、挂机提醒、定时日常、定时答题、活动开放提醒、定时资源/副本执行、赛车专项定时） |
 
 ## 9. 里程碑
 
@@ -230,14 +233,14 @@ astrbot_plugin_xyzw              web adapter / web ui
 - 本地存储：`storage.py`
 - 通知路由：`notifier.py`
 - sidecar 客户端：`sidecar_client.py`
-- 已落地命令：`/xyzw 健康`、`/xyzw 绑定`、`/xyzw 绑定 url`、`/xyzw 绑定 bin`、`/xyzw 账号`、`/xyzw 状态`、`/xyzw 车`、`/xyzw 日常`、`/xyzw 副本`、`/xyzw 资源`、`/xyzw 通知 ...`、`/xyzw 定时 ...`
+- 已落地命令：`/xyzw 健康`、`/xyzw 绑定`、`/xyzw 绑定 url`、`/xyzw 绑定 bin`、`/xyzw 账号`、`/xyzw 状态`、`/xyzw 赛车`、`/xyzw 日常`、`/xyzw 副本`、`/xyzw 资源`、`/xyzw 通知 ...`、`/xyzw 定时 ...`
 - sidecar 服务最小实现：`sidecar/`
 - 配置 schema：`_conf_schema.json`
 - 项目说明：`README.md`
 
 ## 12. 当前 sidecar 范围边界
 
-- 已实现：`/health`、`/v1/token/server-list`、`/v1/token/authuser`、`/v1/token/verify`、`/v1/account/describe`、`/v1/command/run`、`/v1/car/overview`、`/v1/car/helpers`、`/v1/car/send`、`/v1/car/claim-ready`、`/v1/task/run-daily`、`/v1/dungeon/run`、`/v1/resource/run`
+- 已实现：`/health`、`/v1/token/server-list`、`/v1/token/authuser`、`/v1/token/verify`、`/v1/account/describe`、`/v1/command/run`、`/v1/car/overview`、`/v1/car/helpers`、`/v1/car/send`、`/v1/car/claim-ready`、`/v1/car/manual-smart-send`、`/v1/task/run-daily`、`/v1/task/run-weekly-study`、`/v1/task/run-monthly-fish`、`/v1/dungeon/run`、`/v1/resource/run`
 - 当前输入支持：WebSocket-ready token、原始 `bin` 的 base64（插件侧另外支持 BIN 文件上传）
 - 已补基础 Web 复用能力：`OPTIONS` 预检、CORS、可配置监听 host
 - 插件侧已实现 URL 绑定：插件直接拉取 HTTP/HTTPS JSON，并兼容顶层原始 token 对象、`token`、`data.token`，随后调用 `/v1/token/verify`
