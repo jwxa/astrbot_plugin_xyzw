@@ -4,6 +4,12 @@ import process from "node:process";
 import { sendJson, readJsonBody, sendNoContent } from "./utils/http.js";
 import { buildCarHelperSnapshot } from "./car-helper-utils.js";
 import { findCarById, summarizeCars } from "./car-utils.js";
+import {
+  runMonthlyFishProgressTask,
+  runManualSmartCarSendTask,
+  runSmartCarSendTask,
+  runWeeklyStudyTask,
+} from "./automation-utils.js";
 import { runSimpleDailyPlan } from "./daily-utils.js";
 import {
   buildDungeonExecution,
@@ -39,7 +45,7 @@ import {
 import { requestAuthUser, requestServerList } from "./xyzw-auth.js";
 
 const SERVICE_NAME = "astrbot-plugin-xyzw-sidecar";
-const SERVICE_VERSION = "0.15.1";
+const SERVICE_VERSION = "0.16.0";
 const startedAt = Date.now();
 const tokenSourceStore = new TokenSourceStore();
 
@@ -274,6 +280,10 @@ const server = createServer(async (request, response) => {
             "POST /v1/car/helpers",
             "POST /v1/car/send",
             "POST /v1/car/claim-ready",
+            "POST /v1/car/smart-send",
+            "POST /v1/car/manual-smart-send",
+            "POST /v1/task/run-weekly-study",
+            "POST /v1/task/run-monthly-fish",
             "POST /v1/task/run-daily",
             "POST /v1/dungeon/run",
             "POST /v1/resource/run",
@@ -799,6 +809,132 @@ const server = createServer(async (request, response) => {
             claimedCars,
             before,
             after,
+          };
+        },
+      );
+
+      sendJson(response, 200, success(result), corsHeaders);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/car/smart-send") {
+      const body = await readJsonBody(request);
+      if (!body.token) {
+        const result = failure("缺少 token", "MISSING_TOKEN", 400);
+        sendJson(response, result.statusCode, result.body, corsHeaders);
+        return;
+      }
+
+      const result = await withClientByToken(
+        body.token,
+        body.timeout_ms,
+        async (client, normalized) => {
+          const execution = await runSmartCarSendTask(client, body.timeout_ms);
+          return {
+            token: {
+              tokenId: normalized.tokenId,
+              maskedToken: normalized.maskedToken,
+              sourceFormat: normalized.sourceFormat,
+              tokenShape: normalized.tokenShape,
+            },
+            ...execution,
+          };
+        },
+      );
+
+      sendJson(response, 200, success(result), corsHeaders);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/car/manual-smart-send") {
+      const body = await readJsonBody(request);
+      if (!body.token) {
+        const result = failure("缺少 token", "MISSING_TOKEN", 400);
+        sendJson(response, result.statusCode, result.body, corsHeaders);
+        return;
+      }
+
+      const result = await withClientByToken(
+        body.token,
+        body.timeout_ms,
+        async (client, normalized) => {
+          const execution = await runManualSmartCarSendTask(
+            client,
+            {
+              helper_whitelist:
+                Array.isArray(body.helper_whitelist) || body.helper_whitelist !== undefined
+                  ? body.helper_whitelist
+                  : body.helper_ids,
+              max_cars: body.max_cars,
+            },
+            body.timeout_ms,
+          );
+          return {
+            token: {
+              tokenId: normalized.tokenId,
+              maskedToken: normalized.maskedToken,
+              sourceFormat: normalized.sourceFormat,
+              tokenShape: normalized.tokenShape,
+            },
+            ...execution,
+          };
+        },
+      );
+
+      sendJson(response, 200, success(result), corsHeaders);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/task/run-weekly-study") {
+      const body = await readJsonBody(request);
+      if (!body.token) {
+        const result = failure("缺少 token", "MISSING_TOKEN", 400);
+        sendJson(response, result.statusCode, result.body, corsHeaders);
+        return;
+      }
+
+      const result = await withClientByToken(
+        body.token,
+        body.timeout_ms,
+        async (client, normalized) => {
+          const execution = await runWeeklyStudyTask(client, body.timeout_ms);
+          return {
+            token: {
+              tokenId: normalized.tokenId,
+              maskedToken: normalized.maskedToken,
+              sourceFormat: normalized.sourceFormat,
+              tokenShape: normalized.tokenShape,
+            },
+            ...execution,
+          };
+        },
+      );
+
+      sendJson(response, 200, success(result), corsHeaders);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/task/run-monthly-fish") {
+      const body = await readJsonBody(request);
+      if (!body.token) {
+        const result = failure("缺少 token", "MISSING_TOKEN", 400);
+        sendJson(response, result.statusCode, result.body, corsHeaders);
+        return;
+      }
+
+      const result = await withClientByToken(
+        body.token,
+        body.timeout_ms,
+        async (client, normalized) => {
+          const execution = await runMonthlyFishProgressTask(client, body.timeout_ms);
+          return {
+            token: {
+              tokenId: normalized.tokenId,
+              maskedToken: normalized.maskedToken,
+              sourceFormat: normalized.sourceFormat,
+              tokenShape: normalized.tokenShape,
+            },
+            ...execution,
           };
         },
       );

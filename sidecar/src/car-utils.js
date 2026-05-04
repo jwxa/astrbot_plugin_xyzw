@@ -71,6 +71,7 @@ export function summarizeCars(raw, nowMs = Date.now()) {
     const status = buildCarStatus(car, nowMs);
     return {
       id: String(car.id ?? ""),
+      slot: Number(car.slot ?? 0),
       color: Number(car.color || 0),
       gradeLabel: gradeLabel(car.color),
       rewards: Array.isArray(car.rewards) ? car.rewards : [],

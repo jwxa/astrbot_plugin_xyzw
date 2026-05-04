@@ -33,6 +33,8 @@ class XyzwSidecarClient:
             "当前最小接口: /health, /v1/token/server-list, /v1/token/authuser, "
             "/v1/token/verify, /v1/account/describe, /v1/command/run, "
             "/v1/car/overview, /v1/car/helpers, /v1/car/send, /v1/car/claim-ready, /v1/task/run-daily, "
+            "/v1/task/run-weekly-study, /v1/task/run-monthly-fish, /v1/car/smart-send, "
+            "/v1/car/manual-smart-send, "
             "/v1/dungeon/run, "
             "/v1/resource/run"
         )
@@ -277,6 +279,78 @@ class XyzwSidecarClient:
             self._request_json_sync,
             "POST",
             "/v1/task/run-daily",
+            payload,
+            self._resolve_http_timeout_seconds(timeout_ms),
+        )
+
+    async def run_weekly_study_task(
+        self,
+        token: str,
+        timeout_ms: int | None = None,
+    ) -> dict:
+        payload: dict[str, object] = {"token": token}
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
+        return await asyncio.to_thread(
+            self._request_json_sync,
+            "POST",
+            "/v1/task/run-weekly-study",
+            payload,
+            self._resolve_http_timeout_seconds(timeout_ms),
+        )
+
+    async def run_monthly_fish_task(
+        self,
+        token: str,
+        timeout_ms: int | None = None,
+    ) -> dict:
+        payload: dict[str, object] = {"token": token}
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
+        return await asyncio.to_thread(
+            self._request_json_sync,
+            "POST",
+            "/v1/task/run-monthly-fish",
+            payload,
+            self._resolve_http_timeout_seconds(timeout_ms),
+        )
+
+    async def run_smart_car_send(
+        self,
+        token: str,
+        timeout_ms: int | None = None,
+    ) -> dict:
+        payload: dict[str, object] = {"token": token}
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
+        return await asyncio.to_thread(
+            self._request_json_sync,
+            "POST",
+            "/v1/car/smart-send",
+            payload,
+            self._resolve_http_timeout_seconds(timeout_ms),
+        )
+
+    async def run_manual_smart_car_send(
+        self,
+        token: str,
+        helper_whitelist: list[str] | None = None,
+        max_cars: int | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict:
+        payload: dict[str, object] = {"token": token}
+        if helper_whitelist:
+            payload["helper_whitelist"] = [
+                str(item).strip() for item in helper_whitelist if str(item).strip()
+            ]
+        if max_cars is not None:
+            payload["max_cars"] = int(max_cars)
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
+        return await asyncio.to_thread(
+            self._request_json_sync,
+            "POST",
+            "/v1/car/manual-smart-send",
             payload,
             self._resolve_http_timeout_seconds(timeout_ms),
         )

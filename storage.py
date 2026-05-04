@@ -42,6 +42,16 @@ def _normalize_action_category(category: str) -> str:
         "resource": "resource",
         "副本": "dungeon",
         "dungeon": "dungeon",
+        "答题": "study",
+        "大冲关": "study",
+        "咸鱼大冲关": "study",
+        "study": "study",
+        "月度": "monthly",
+        "月末": "monthly",
+        "monthly": "monthly",
+        "赛车": "car",
+        "疯狂赛车": "car",
+        "car": "car",
     }
     return mapping.get(normalized, normalized)
 
@@ -55,6 +65,73 @@ def _normalize_action_options(options: dict[str, Any] | None) -> dict[str, Any]:
     except Exception:
         normalized = {}
     return normalized if isinstance(normalized, dict) else {}
+
+
+def _normalize_schedule_time(schedule_time: str | None) -> str:
+    value = str(schedule_time or "").strip()
+    if not value or ":" not in value:
+        raise ValueError("schedule_time 格式无效")
+    parts = value.split(":", 1)
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        raise ValueError("schedule_time 格式无效")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ValueError("schedule_time 超出有效范围")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _normalize_schedule_type(schedule_type: str | None) -> str:
+    normalized = _normalize_alias(schedule_type or "").lower()
+    mapping = {
+        "daily": "daily",
+        "day": "daily",
+        "每日": "daily",
+        "weekly": "weekly",
+        "week": "weekly",
+        "每周": "weekly",
+        "month_end": "month_end",
+        "monthend": "month_end",
+        "monthly_end": "month_end",
+        "月末": "month_end",
+        "月底": "month_end",
+    }
+    return mapping.get(normalized, "daily")
+
+
+def _normalize_schedule_weekdays(value: Any) -> list[int]:
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple, set)) else [value]
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for item in items:
+        try:
+            weekday = int(item)
+        except (TypeError, ValueError):
+            continue
+        if weekday < 0 or weekday > 6 or weekday in seen:
+            continue
+        seen.add(weekday)
+        normalized.append(weekday)
+    return sorted(normalized)
+
+
+def _normalize_schedule_rule(
+    schedule_type: str | None,
+    schedule_rule: dict[str, Any] | None,
+) -> dict[str, Any]:
+    normalized_type = _normalize_schedule_type(schedule_type)
+    payload = schedule_rule if isinstance(schedule_rule, dict) else {}
+    if normalized_type != "weekly":
+        return {}
+
+    weekdays = _normalize_schedule_weekdays(
+        payload.get("weekdays", payload.get("weekday")),
+    )
+    return {
+        "weekdays": weekdays or [0],
+    }
 
 
 def _normalize_member_ids(member_ids: list[str] | tuple[str, ...] | set[str] | str | None) -> list[str]:
@@ -81,6 +158,8 @@ def _build_action_job_id(
     category: str,
     action: str,
     options: dict[str, Any] | None,
+    schedule_type: str | None = None,
+    schedule_rule: dict[str, Any] | None = None,
 ) -> str:
     normalized_options = _normalize_action_options(options)
     source = json.dumps(
@@ -202,11 +281,56 @@ class XyzwStorage:
                 self.data = json.load(file)
         except Exception:
             self.data = {"users": {}}
+        self._migrate_data()
 
     def _save(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with open(self.data_file, "w", encoding="utf-8") as file:
             json.dump(self.data, file, ensure_ascii=False, indent=2)
+
+    def _migrate_data(self) -> None:
+        users = self.data.setdefault("users", {})
+        dirty = False
+        for user in users.values():
+            if not isinstance(user, dict):
+                continue
+            schedules = user.setdefault("schedules", {})
+            action_tasks = schedules.setdefault("action_tasks", [])
+            for item in action_tasks:
+                if not isinstance(item, dict):
+                    continue
+                normalized_schedule_type = _normalize_schedule_type(
+                    item.get("schedule_type")
+                )
+                normalized_schedule_rule = _normalize_schedule_rule(
+                    normalized_schedule_type,
+                    item.get("schedule_rule"),
+                )
+                normalized_schedule_time = _normalize_schedule_time(
+                    item.get("schedule_time") or "00:00"
+                )
+                normalized_job_id = _build_action_job_id(
+                    str(item.get("account_id") or "").strip(),
+                    str(item.get("category") or ""),
+                    str(item.get("action") or ""),
+                    item.get("options"),
+                    normalized_schedule_type,
+                    normalized_schedule_rule,
+                )
+                if item.get("schedule_type") != normalized_schedule_type:
+                    item["schedule_type"] = normalized_schedule_type
+                    dirty = True
+                if item.get("schedule_rule") != normalized_schedule_rule:
+                    item["schedule_rule"] = normalized_schedule_rule
+                    dirty = True
+                if item.get("schedule_time") != normalized_schedule_time:
+                    item["schedule_time"] = normalized_schedule_time
+                    dirty = True
+                if item.get("job_id") != normalized_job_id:
+                    item["job_id"] = normalized_job_id
+                    dirty = True
+        if dirty:
+            self._save()
 
     def _ensure_account_shape(self, account: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(account, dict):
@@ -860,8 +984,17 @@ class XyzwStorage:
         category: str,
         action: str,
         options: dict[str, Any] | None = None,
+        schedule_type: str | None = None,
+        schedule_rule: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        job_id = _build_action_job_id(account_id, category, action, options)
+        job_id = _build_action_job_id(
+            account_id,
+            category,
+            action,
+            options,
+            schedule_type,
+            schedule_rule,
+        )
         return self.get_action_task_by_job_id(user_id, job_id)
 
     def get_action_task_by_job_id(
@@ -897,6 +1030,14 @@ class XyzwStorage:
             filtered,
             key=lambda item: (
                 not bool(item.get("enabled")),
+                _normalize_schedule_type(item.get("schedule_type")) == "month_end",
+                _normalize_schedule_type(item.get("schedule_type")) == "weekly",
+                tuple(
+                    _normalize_schedule_rule(
+                        item.get("schedule_type"),
+                        item.get("schedule_rule"),
+                    ).get("weekdays", [])
+                ),
                 item.get("schedule_time", ""),
                 str(item.get("category") or ""),
                 item.get("label", ""),
@@ -914,22 +1055,27 @@ class XyzwStorage:
         schedule_time: str,
         options: dict[str, Any] | None = None,
         timeout_ms: int | None = None,
+        schedule_type: str = "daily",
+        schedule_rule: dict[str, Any] | None = None,
         enabled: bool = True,
     ) -> dict[str, Any]:
         normalized_category = _normalize_action_category(category)
         normalized_action = str(action or "").strip()
         normalized_label = _normalize_alias(label)
-        normalized_schedule_time = str(schedule_time or "").strip()
+        normalized_schedule_time = _normalize_schedule_time(schedule_time)
         normalized_options = _normalize_action_options(options)
+        normalized_schedule_type = _normalize_schedule_type(schedule_type)
+        normalized_schedule_rule = _normalize_schedule_rule(
+            normalized_schedule_type,
+            schedule_rule,
+        )
 
-        if normalized_category not in {"resource", "dungeon"}:
+        if normalized_category not in {"resource", "dungeon", "study", "monthly", "car"}:
             raise ValueError("category 不支持")
         if not str(account_id or "").strip():
             raise ValueError("account_id 不能为空")
         if not normalized_action:
             raise ValueError("action 不能为空")
-        if not normalized_schedule_time:
-            raise ValueError("schedule_time 不能为空")
         if not normalized_label:
             raise ValueError("label 不能为空")
 
@@ -938,6 +1084,8 @@ class XyzwStorage:
             category=normalized_category,
             action=normalized_action,
             options=normalized_options,
+            schedule_type=normalized_schedule_type,
+            schedule_rule=normalized_schedule_rule,
         )
         entries = self._get_action_task_entries(user_id)
         now = _now_iso()
@@ -954,6 +1102,8 @@ class XyzwStorage:
                 "timeout_ms": int(timeout_ms or 0),
                 "enabled": bool(enabled),
                 "schedule_time": normalized_schedule_time,
+                "schedule_type": normalized_schedule_type,
+                "schedule_rule": normalized_schedule_rule,
                 "last_run_date": "",
                 "last_run_at": "",
                 "last_status": "idle",
@@ -968,6 +1118,8 @@ class XyzwStorage:
         else:
             entry["label"] = normalized_label
             entry["schedule_time"] = normalized_schedule_time
+            entry["schedule_type"] = normalized_schedule_type
+            entry["schedule_rule"] = normalized_schedule_rule
             entry["options"] = normalized_options
             entry["timeout_ms"] = int(timeout_ms or 0)
             entry["enabled"] = bool(enabled)
@@ -992,6 +1144,8 @@ class XyzwStorage:
         category: str,
         action: str,
         options: dict[str, Any] | None = None,
+        schedule_type: str | None = None,
+        schedule_rule: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         entry = self.get_action_task(
             user_id=user_id,
@@ -999,6 +1153,8 @@ class XyzwStorage:
             category=category,
             action=action,
             options=options,
+            schedule_type=schedule_type,
+            schedule_rule=schedule_rule,
         )
         if entry is None:
             raise ValueError("未找到对应的定时执行配置")

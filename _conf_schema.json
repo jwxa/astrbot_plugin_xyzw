@@ -74,6 +74,19 @@
     "min": 5,
     "max": 720
   },
+  "smart_car_helper_whitelist": {
+    "description": "智能发车默认护卫白名单",
+    "hint": "使用英文逗号分隔 roleId，按从左到右的优先级依次尝试，例如：123,456,789",
+    "type": "string",
+    "default": ""
+  },
+  "manual_smart_car_timeout_ms": {
+    "description": "手动智能发车调用 sidecar 的超时（毫秒）",
+    "type": "int",
+    "default": 180000,
+    "min": 10000,
+    "max": 300000
+  },
   "daily_task_timeout_ms": {
     "description": "定时日常执行时调用 sidecar 的超时（毫秒）",
     "type": "int",
