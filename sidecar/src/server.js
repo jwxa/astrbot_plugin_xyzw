@@ -280,7 +280,6 @@ const server = createServer(async (request, response) => {
             "POST /v1/car/helpers",
             "POST /v1/car/send",
             "POST /v1/car/claim-ready",
-            "POST /v1/car/smart-send",
             "POST /v1/car/manual-smart-send",
             "POST /v1/task/run-weekly-study",
             "POST /v1/task/run-monthly-fish",
@@ -817,6 +816,8 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    // Deprecated: retained for backward compatibility. New callers should use
+    // /v1/car/manual-smart-send instead.
     if (request.method === "POST" && url.pathname === "/v1/car/smart-send") {
       const body = await readJsonBody(request);
       if (!body.token) {
