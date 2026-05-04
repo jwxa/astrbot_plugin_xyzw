@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -110,6 +110,12 @@ class XyzwPlugin(Star):
             default=30000,
             min_value=5000,
             max_value=120000,
+        )
+        self.manual_smart_car_timeout_ms = self._read_int_config(
+            "manual_smart_car_timeout_ms",
+            default=180000,
+            min_value=10000,
+            max_value=300000,
         )
         self.wechat_qrcode_poll_interval_ms = self._read_int_config(
             "wechat_qrcode_poll_interval_ms",
@@ -612,11 +618,13 @@ class XyzwPlugin(Star):
             "车辆命令\n\n"
             "/xyzw 车\n"
             "/xyzw 车 查看 [别名或ID前缀]\n"
+            "/xyzw 车 智能发车 [别名或ID前缀]\n"
             "/xyzw 车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
             "/xyzw 车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
             "/xyzw 车 收车 [别名或ID前缀]\n\n"
             "说明: 品阶 >= 5 的车辆发车时必须提供护卫ID，低品级车辆可直接发车。\n"
-            "发车时间限制: 仅周一至周三 06:00-20:00 可发车。"
+            "发车时间限制: 仅周一至周三 06:00-20:00 可发车。\n"
+            "智能发车说明: 手动智能发车会同步执行独立 sidecar 逻辑，并优先使用插件配置中的护卫白名单。"
         )
 
     def _daily_usage(self) -> str:
@@ -1379,6 +1387,16 @@ class XyzwPlugin(Star):
             return parts
         return None
 
+    def _default_smart_car_helper_whitelist(self) -> list[str]:
+        raw = str(self.config.get("smart_car_helper_whitelist", "") or "").strip()
+        if not raw:
+            return []
+        return [
+            item.strip()
+            for item in raw.replace("，", ",").split(",")
+            if item.strip().isdigit()
+        ]
+
     def _format_car_overview_text(
         self,
         account: dict[str, Any],
@@ -1524,6 +1542,82 @@ class XyzwPlugin(Star):
                 f"战力: {helper.get('power', 0) or 0}"
                 f" | 红粹: {helper.get('redQuench', 0) or 0}"
             )
+        return "\n".join(lines)
+
+    def _format_manual_smart_car_result_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        details = result.get("details", []) or []
+        helpers = result.get("helpers", []) or []
+        lines = [
+            "智能发车结果",
+            f"- 别名: {account.get('alias')}",
+            f"- 处理车辆: {int(result.get('processedCount') or 0)}",
+            f"- 发车前空闲: {int(result.get('idleCountBefore') or 0)}",
+            f"- 发车后空闲: {int(result.get('idleCountAfter') or 0)}",
+            f"- 刷新券: {int(result.get('refreshTicketsBefore') or 0)} -> {int(result.get('refreshTicketsAfter') or 0)}",
+            f"- 超级跑车: {self._format_super_car_status_text(result)}",
+        ]
+
+        whitelist = result.get("helperWhitelist") or []
+        if whitelist:
+            lines.append(f"- 护卫白名单: {','.join(str(item) for item in whitelist)}")
+
+        if not details:
+            lines.append("")
+            lines.append("当前没有需要处理的未发车车辆。")
+        else:
+            lines.append("")
+            lines.append("车辆明细:")
+            for index, item in enumerate(details[:4], start=1):
+                lines.append(
+                    f"{index}. {item.get('gradeLabel') or '未知'} id={item.get('carId') or '-'}"
+                )
+                lines.append(
+                    "   "
+                    f"状态: {item.get('status') or '-'}"
+                    f" | 发车时间: {item.get('sendAtText') or '-'}"
+                    f" | 预计完成: {item.get('etaText') or '-'}"
+                )
+                lines.append(
+                    "   "
+                    f"护卫ID: {item.get('helperId') or '-'}"
+                    f" | 备注: {item.get('note') or '-'}"
+                )
+
+        if helpers:
+            lines.append("")
+            lines.append("护卫成员:")
+            for index, helper in enumerate(helpers[:8], start=1):
+                lines.append(
+                    f"{index}. {helper.get('displayName') or helper.get('roleId')}"
+                    f" (ID: {helper.get('roleId') or '-'})"
+                )
+                lines.append(
+                    "   "
+                    f"状态: {'可用' if helper.get('isAvailable') else '已满'}"
+                    f" | 已护卫 {helper.get('usedCount', 0)}/{helper.get('maxCount', 4)}"
+                    f" | 剩余 {helper.get('availableCount', 0)}"
+                )
+                lines.append(
+                    "   "
+                    f"战力: {helper.get('power', 0) or 0}"
+                    f" | 红粹: {helper.get('redQuench', 0) or 0}"
+                )
+
+        failures = result.get("failures", []) or []
+        if failures:
+            lines.append("")
+            lines.append("失败记录:")
+            for index, failure in enumerate(failures[:8], start=1):
+                lines.append(
+                    f"{index}. id={failure.get('carId') or '-'}"
+                    f" | 阶段: {failure.get('stage') or '-'}"
+                    f" | 原因: {failure.get('message') or '未知错误'}"
+                )
+
         return "\n".join(lines)
 
     def _find_car_in_overview(
@@ -1917,7 +2011,7 @@ class XyzwPlugin(Star):
             "/xyzw 通知 查看\n"
             "/xyzw 通知 解绑\n"
             "/xyzw 通知 测试\n\n"
-            "当前已实现: sidecar 健康检查、会话式 token 绑定、URL 绑定、BIN 导入绑定、多账号管理、默认账号切换、状态查询、车辆概览/护卫成员状态查询/发车/收车、简版日常、基础副本命令、基础资源命令、通知群绑定、收车提醒基础版、挂机提醒基础版、护卫成员提醒基础版、定时日常基础版、定时资源/副本执行基础版、活动开放提醒基础版。\n"
+            "当前已实现: sidecar 健康检查、会话式 token 绑定、URL 绑定、BIN 导入绑定、多账号管理、默认账号切换、状态查询、车辆概览/护卫成员状态查询/发车/收车、简版日常、基础副本命令、基础资源命令、通知群绑定、收车提醒基础版、挂机提醒基础版、护卫成员提醒基础版、定时日常基础版、定时资源/副本执行基础版、活动开放提醒基础版、每周大冲关、月末月度任务提醒、月末钓鱼进度补齐、赛车禁发提醒、赛车智能发车、赛车夜间收车提醒、赛车主动收车。\n"
             "当前未实现: 批量任务、复杂副本编排。"
         )
 
@@ -2041,16 +2135,114 @@ class XyzwPlugin(Star):
         return {
             "resource": "资源",
             "dungeon": "副本",
+            "study": "大冲关",
+            "monthly": "月度任务",
+            "car": "疯狂赛车",
         }.get(str(category or "").strip().lower(), str(category or "-"))
 
     def _scheduled_action_status_text(self, status: str | None) -> str:
         return {
             "idle": "未执行",
             "success": "执行成功",
+            "empty": "无可执行项",
             "failed": "执行失败",
             "blocked": "通知群未绑定",
             "running": "执行中",
         }.get(str(status or "").strip().lower(), "未执行")
+
+    def _weekday_label(self, weekday: int) -> str:
+        return {
+            0: "周一",
+            1: "周二",
+            2: "周三",
+            3: "周四",
+            4: "周五",
+            5: "周六",
+            6: "周日",
+        }.get(int(weekday), f"星期{weekday}")
+
+    def _parse_weekday_token(self, value: str | None) -> int | None:
+        normalized = str(value or "").strip().lower()
+        mapping = {
+            "0": 0,
+            "1": 1,
+            "2": 2,
+            "3": 3,
+            "4": 4,
+            "5": 5,
+            "6": 6,
+            "周一": 0,
+            "周1": 0,
+            "星期一": 0,
+            "mon": 0,
+            "monday": 0,
+            "周二": 1,
+            "周2": 1,
+            "星期二": 1,
+            "tue": 1,
+            "tuesday": 1,
+            "周三": 2,
+            "周3": 2,
+            "星期三": 2,
+            "wed": 2,
+            "wednesday": 2,
+            "周四": 3,
+            "周4": 3,
+            "星期四": 3,
+            "thu": 3,
+            "thursday": 3,
+            "周五": 4,
+            "周5": 4,
+            "星期五": 4,
+            "fri": 4,
+            "friday": 4,
+            "周六": 5,
+            "周6": 5,
+            "星期六": 5,
+            "sat": 5,
+            "saturday": 5,
+            "周日": 6,
+            "周天": 6,
+            "周7": 6,
+            "星期日": 6,
+            "星期天": 6,
+            "sun": 6,
+            "sunday": 6,
+        }
+        return mapping.get(normalized)
+
+    def _parse_weekday_list(self, values: list[str] | tuple[str, ...]) -> list[int]:
+        weekdays: list[int] = []
+        seen: set[int] = set()
+        for value in values:
+            weekday = self._parse_weekday_token(value)
+            if weekday is None or weekday in seen:
+                continue
+            seen.add(weekday)
+            weekdays.append(weekday)
+        return sorted(weekdays)
+
+    def _format_weekdays_text(self, weekdays: list[int] | tuple[int, ...]) -> str:
+        values: list[str] = []
+        for item in weekdays:
+            try:
+                weekday = int(item)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= weekday <= 6:
+                values.append(self._weekday_label(weekday))
+        return "、".join(values) if values else "每日"
+
+    def _format_schedule_rule_text(self, schedule: dict[str, Any]) -> str:
+        schedule_type = str(schedule.get("schedule_type") or "daily").strip().lower()
+        schedule_time = str(schedule.get("schedule_time") or "-").strip() or "-"
+        rule = schedule.get("schedule_rule") or {}
+        if schedule_type == "weekly":
+            weekdays = rule.get("weekdays") or []
+            return f"每周 {self._format_weekdays_text(weekdays)} {schedule_time}"
+        if schedule_type == "month_end":
+            return f"每月月末 {schedule_time}"
+        return f"每日 {schedule_time}"
 
     def _resource_action_label(
         self,
@@ -2100,6 +2292,341 @@ class XyzwPlugin(Star):
         if action == "skinchallenge_tower":
             return f"换皮挑战 Boss {int(normalized_options.get('tower_type') or 0)}"
         return mapping.get(action, action)
+
+    def _study_action_label(self, action: str) -> str:
+        return {
+            "weekly_answer": "咸鱼大冲关",
+        }.get(str(action or "").strip(), str(action or "-"))
+
+    def _monthly_action_label(self, action: str) -> str:
+        return {
+            "monthly_task_reminder": "月度任务提醒",
+            "monthly_fish_progress": "钓鱼进度",
+        }.get(str(action or "").strip(), str(action or "-"))
+
+    def _car_action_label(self, action: str) -> str:
+        return {
+            "car_deadline_reminder": "禁发提醒",
+            "car_claim_reminder": "收车提醒",
+            "car_claim_ready": "主动收车",
+            "smart_send_car": "智能发车",
+        }.get(str(action or "").strip(), str(action or "-"))
+
+    def _parse_study_command_spec(
+        self,
+        command_tokens: list[str],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if not command_tokens:
+            return None, self._schedule_usage()
+
+        remaining_tokens = list(command_tokens)
+        weekday = 0
+        candidate_weekday = self._parse_weekday_token(remaining_tokens[0])
+        if candidate_weekday is not None and len(remaining_tokens) >= 2:
+            weekday = candidate_weekday
+            remaining_tokens = remaining_tokens[1:]
+
+        if not remaining_tokens:
+            return None, self._schedule_usage()
+
+        schedule_time = remaining_tokens[0]
+        if self._parse_schedule_time(schedule_time) is None:
+            return None, "时间格式无效，请使用 HH:MM，例如 08:00。"
+
+        selector = " ".join(remaining_tokens[1:]).strip()
+        return {
+            "category": "study",
+            "action": "weekly_answer",
+            "label": self._study_action_label("weekly_answer"),
+            "selector": selector,
+            "schedule_time": schedule_time,
+            "schedule_type": "weekly",
+            "schedule_rule": {"weekdays": [weekday]},
+            "timeout_ms": 120000,
+        }, None
+
+    def _parse_monthly_command_spec(
+        self,
+        action_token: str,
+        command_tokens: list[str],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if not command_tokens:
+            return None, self._schedule_usage()
+
+        normalized_action = str(action_token or "").strip().lower()
+        if normalized_action in {"提醒", "remind", "任务", "task"}:
+            action = "monthly_task_reminder"
+            label = self._monthly_action_label(action)
+        elif normalized_action in {"钓鱼", "fish", "进度"}:
+            action = "monthly_fish_progress"
+            label = self._monthly_action_label(action)
+        else:
+            return None, self._schedule_usage()
+
+        schedule_time = command_tokens[0]
+        if self._parse_schedule_time(schedule_time) is None:
+            return None, "时间格式无效，请使用 HH:MM，例如 20:00。"
+
+        selector = " ".join(command_tokens[1:]).strip()
+        return {
+            "category": "monthly",
+            "action": action,
+            "label": label,
+            "selector": selector,
+            "schedule_time": schedule_time,
+            "schedule_type": "month_end",
+            "schedule_rule": {},
+            "timeout_ms": 120000 if action == "monthly_fish_progress" else 15000,
+        }, None
+
+    def _parse_car_command_spec(
+        self,
+        action_token: str,
+        command_tokens: list[str],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if not command_tokens:
+            return None, self._schedule_usage()
+
+        normalized_action = str(action_token or "").strip().lower()
+        if normalized_action in {"提醒", "remind", "封盘", "notice"}:
+            action = "car_deadline_reminder"
+            label = self._car_action_label(action)
+        elif normalized_action in {"智能", "smart", "智能发车"}:
+            action = "smart_send_car"
+            label = self._car_action_label(action)
+        else:
+            return None, self._schedule_usage()
+
+        schedule_time = command_tokens[0]
+        parsed_time = self._parse_schedule_time(schedule_time)
+        if parsed_time is None:
+            return None, "时间格式无效，请使用 HH:MM，例如 19:50。"
+        hour, minute = parsed_time
+        if (hour, minute) < (6, 0) or (hour, minute) >= (20, 0):
+            return None, "赛车相关定时时间必须落在 06:00-20:00 之间。"
+
+        selector = " ".join(command_tokens[1:]).strip()
+        return {
+            "category": "car",
+            "action": action,
+            "label": label,
+            "selector": selector,
+            "schedule_time": schedule_time,
+            "schedule_type": "weekly",
+            "schedule_rule": {"weekdays": [0, 1, 2]},
+            "timeout_ms": 15000 if action == "car_deadline_reminder" else 180000,
+        }, None
+
+    def _parse_car_claim_command_spec(
+        self,
+        action_token: str,
+        command_tokens: list[str],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        normalized_action = str(action_token or "").strip().lower()
+        if normalized_action in {"收车提醒", "提醒收车", "claimremind", "claim_remind"}:
+            action = "car_claim_reminder"
+        elif normalized_action in {"主动收车", "自动收车", "收车", "claim", "claimready", "claim_ready"}:
+            action = "car_claim_ready"
+        else:
+            return None, self._schedule_usage()
+
+        schedule_time = "23:55"
+        selector_tokens = list(command_tokens)
+        if selector_tokens:
+            candidate = str(selector_tokens[0] or "").strip()
+            parsed_time = self._parse_schedule_time(candidate)
+            if ":" in candidate and parsed_time is None:
+                return None, "时间格式无效，请使用 HH:MM，例如 23:55。"
+            if parsed_time is not None:
+                schedule_time = candidate
+                selector_tokens = selector_tokens[1:]
+
+        selector = " ".join(selector_tokens).strip()
+        return {
+            "category": "car",
+            "action": action,
+            "label": self._car_action_label(action),
+            "selector": selector,
+            "schedule_time": schedule_time,
+            "schedule_type": "daily",
+            "schedule_rule": {},
+            "timeout_ms": 15000 if action == "car_claim_reminder" else 30000,
+        }, None
+
+    def _build_weekly_study_result_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "咸鱼大冲关结果",
+            f"- 别名: {account.get('alias')}",
+            f"- 题库: {int(result.get('questionBankSize') or 0)}",
+            f"- 题目: {int(result.get('questionCount') or 0)}",
+            f"- 已答: {int(result.get('answeredCount') or 0)}",
+            f"- 默认答案: {int(result.get('usedDefaultCount') or 0)}",
+            f"- 奖励尝试: {int(result.get('rewardAttempts') or 0)}",
+            f"- 本周已完成: {'是' if result.get('completedThisWeek') else '否'}",
+        ]
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
+
+    def _build_monthly_task_reminder_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "月度任务提醒",
+            f"- 别名: {account.get('alias')}",
+            f"- 钓鱼进度: {int(result.get('fishNum') or 0)}/{int(result.get('fishTarget') or 320)}",
+            f"- 竞技场进度: {int(result.get('arenaNum') or 0)}/{int(result.get('arenaTarget') or 240)}",
+        ]
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
+
+    def _build_monthly_fish_result_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "钓鱼进度补齐",
+            f"- 别名: {account.get('alias')}",
+            f"- 目标: {int(result.get('target') or 320)}",
+            f"- 执行前: {int(result.get('beforeFishNum') or 0)}",
+            f"- 执行后: {int(result.get('afterFishNum') or 0)}",
+            f"- 免费: {int(result.get('freeUsed') or 0)}",
+            f"- 付费: {int(result.get('paidCount') or 0)}",
+            f"- 已完成: {'是' if result.get('completed') else '否'}",
+        ]
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
+
+    def _build_car_deadline_reminder_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "疯狂赛车禁发提醒",
+            f"- 别名: {account.get('alias')}",
+            f"- 未发车: {int(result.get('idleCount') or 0)}",
+            f"- 可收车: {int(result.get('claimableCount') or 0)}",
+            f"- 时段: {self._car_send_window_text()}",
+        ]
+        cars = result.get("idleCars", []) or []
+        if cars:
+            lines.append("")
+            lines.append("待发车辆:")
+            for index, car in enumerate(cars[:6], start=1):
+                lines.append(
+                    f"{index}. {car.get('gradeLabel') or '未知'} id={car.get('id')}"
+                )
+            if len(cars) > 6:
+                lines.append(f"... 其余 {len(cars) - 6} 辆未展开")
+
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
+
+    def _build_car_claim_reminder_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "疯狂赛车收车提醒",
+            f"- 别名: {account.get('alias')}",
+            f"- 可收车: {int(result.get('claimableCount') or 0)}",
+        ]
+        cars = result.get("claimableCars", []) or []
+        if cars:
+            lines.append("")
+            lines.append("待收车辆:")
+            for index, car in enumerate(cars[:6], start=1):
+                lines.append(
+                    f"{index}. {car.get('gradeLabel') or '未知'} id={car.get('id')}"
+                )
+            if len(cars) > 6:
+                lines.append(f"... 其余 {len(cars) - 6} 辆未展开")
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
+
+    def _build_car_claim_ready_result_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "主动收车结果",
+            f"- 别名: {account.get('alias')}",
+            f"- 成功收取: {int(result.get('claimedCount') or 0)}",
+            f"- 失败: {len(result.get('failures') or [])}",
+            f"- 收取后可收车: {int((((result.get('after') or {}).get('summary') or {}).get('claimableCars') or 0))}",
+        ]
+        claimed_cars = result.get("claimedCars", []) or []
+        if claimed_cars:
+            lines.append("")
+            lines.append("已收车辆:")
+            for index, car in enumerate(claimed_cars[:8], start=1):
+                lines.append(
+                    f"{index}. {car.get('gradeLabel') or '未知'} id={car.get('id')}"
+                )
+            if len(claimed_cars) > 8:
+                lines.append(f"... 其余 {len(claimed_cars) - 8} 辆未展开")
+
+        failures = result.get("failures", []) or []
+        if failures:
+            lines.append("")
+            lines.append("失败车辆:")
+            for index, item in enumerate(failures[:8], start=1):
+                lines.append(
+                    f"{index}. id={item.get('id') or '-'} - {item.get('message') or '未知错误'}"
+                )
+            if len(failures) > 8:
+                lines.append(f"... 其余 {len(failures) - 8} 辆未展开")
+
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
+
+    def _build_car_smart_send_result_text(
+        self,
+        account: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str:
+        lines = [
+            "智能发车结果",
+            f"- 别名: {account.get('alias')}",
+            f"- 处理车辆: {int(result.get('processedCount') or 0)}",
+            f"- 发车成功: {len(result.get('sentCars') or [])}",
+            f"- 刷新次数: {len(result.get('refreshedCars') or [])}",
+            f"- 失败: {len(result.get('failures') or [])}",
+            f"- 发车前未发: {int(result.get('idleCountBefore') or 0)}",
+            f"- 发车后未发: {int(result.get('idleCountAfter') or 0)}",
+        ]
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append("")
+            lines.append(message)
+        return "\n".join(lines)
 
     def _parse_resource_command_spec(
         self,
@@ -2429,6 +2956,394 @@ class XyzwPlugin(Star):
             "data": data,
         }
 
+    async def _run_study_action_request(
+        self,
+        user_id: str,
+        account: dict[str, Any],
+        action: str,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        if action != "weekly_answer":
+            return {
+                "ok": False,
+                "status": "failed",
+                "error_message": f"不支持的答题动作: {action}",
+                "data": {},
+            }
+
+        response = await self._call_with_account_token_ready(
+            user_id,
+            account,
+            lambda ready_account: self.sidecar.run_weekly_study_task(
+                ready_account.get("token", ""),
+                timeout_ms=timeout_ms,
+            ),
+            reason="study:weekly_answer",
+        )
+        if not response.get("ok"):
+            return {
+                "ok": False,
+                "status": "failed",
+                "error_message": response.get("message", "未知错误"),
+                "data": {},
+            }
+
+        data = response.get("data", {}) or {}
+        if data.get("alreadyCompleted"):
+            data["message"] = "本周咸鱼大冲关已完成，无需重复作答。"
+            return {
+                "ok": True,
+                "status": "empty",
+                "error_message": "",
+                "data": data,
+            }
+        if not data.get("completedThisWeek"):
+            data["message"] = "答题流程已执行，但未确认本周任务完成，请手动复查。"
+            return {
+                "ok": False,
+                "status": "failed",
+                "error_message": "答题后仍未完成本周任务",
+                "data": data,
+            }
+
+        data["message"] = "咸鱼大冲关已完成。"
+        return {
+            "ok": True,
+            "status": "success",
+            "error_message": "",
+            "data": data,
+        }
+
+    async def _run_monthly_action_request(
+        self,
+        user_id: str,
+        account: dict[str, Any],
+        action: str,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        if action == "monthly_task_reminder":
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.run_command(
+                    ready_account.get("token", ""),
+                    "activity_get",
+                    timeout_ms=timeout_ms,
+                    response_command="activity_getresp",
+                ),
+                reason="monthly:activity_get",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": response.get("message", "未知错误"),
+                    "data": {},
+                }
+
+            raw = response.get("data", {}) or {}
+            activity = raw.get("body", {}) or {}
+            activity_data = activity.get("activity") or activity
+            result = {
+                "fishNum": int(
+                    (
+                        ((activity_data.get("myMonthInfo") or {}).get("2") or {})
+                    ).get("num")
+                    or 0
+                ),
+                "arenaNum": int(
+                    ((activity_data.get("myArenaInfo") or {}).get("num") or 0)
+                ),
+                "fishTarget": 320,
+                "arenaTarget": 240,
+                "message": "今天是本月最后一天，请及时确认月度任务完成情况。",
+            }
+            return {
+                "ok": True,
+                "status": "success",
+                "error_message": "",
+                "data": result,
+            }
+
+        if action == "monthly_fish_progress":
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.run_monthly_fish_task(
+                    ready_account.get("token", ""),
+                    timeout_ms=timeout_ms,
+                ),
+                reason="monthly:fish_progress",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": response.get("message", "未知错误"),
+                    "data": {},
+                }
+
+            data = response.get("data", {}) or {}
+            if data.get("alreadyCompleted"):
+                data["message"] = "月度钓鱼进度已满，无需补齐。"
+                return {
+                    "ok": True,
+                    "status": "empty",
+                    "error_message": "",
+                    "data": data,
+                }
+            if not data.get("completed"):
+                data["message"] = "钓鱼补齐流程已执行，但仍未达到月度目标。"
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": "钓鱼进度未补齐到目标值",
+                    "data": data,
+                }
+
+            data["message"] = "月度钓鱼进度已补齐。"
+            return {
+                "ok": True,
+                "status": "success",
+                "error_message": "",
+                "data": data,
+            }
+
+        return {
+            "ok": False,
+            "status": "failed",
+            "error_message": f"不支持的月度动作: {action}",
+            "data": {},
+        }
+
+    async def _run_car_action_request(
+        self,
+        user_id: str,
+        account: dict[str, Any],
+        action: str,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        if action == "car_deadline_reminder":
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.get_car_overview(
+                    ready_account.get("token", ""),
+                    timeout_ms=timeout_ms,
+                ),
+                reason="car:deadline_reminder",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": response.get("message", "未知错误"),
+                    "data": {},
+                }
+
+            overview = (response.get("data", {}) or {}).get("overview", {}) or {}
+            idle_cars = [
+                car for car in (overview.get("cars") or []) if car.get("status") == "idle"
+            ]
+            result = {
+                "idleCount": len(idle_cars),
+                "claimableCount": int((overview.get("summary") or {}).get("claimableCars") or 0),
+                "idleCars": idle_cars,
+                "message": (
+                    "今晚 20:00 后将无法发车，请尽快处理未发车辆。"
+                    if idle_cars
+                    else "当前没有待发车辆，无需提醒。"
+                ),
+            }
+            return {
+                "ok": True,
+                "status": "success" if idle_cars else "empty",
+                "error_message": "",
+                "data": result,
+            }
+
+        if action == "car_claim_reminder":
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.get_car_overview(
+                    ready_account.get("token", ""),
+                    timeout_ms=timeout_ms,
+                ),
+                reason="car:claim_reminder",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": response.get("message", "未知错误"),
+                    "data": {},
+                }
+
+            overview = (response.get("data", {}) or {}).get("overview", {}) or {}
+            claimable_cars = [
+                car for car in (overview.get("cars") or []) if car.get("claimable")
+            ]
+            result = {
+                "claimableCount": len(claimable_cars),
+                "claimableCars": claimable_cars,
+                "message": (
+                    "当前存在可收车辆，请及时收车。"
+                    if claimable_cars
+                    else "当前没有可收车辆。"
+                ),
+            }
+            return {
+                "ok": True,
+                "status": "success" if claimable_cars else "empty",
+                "error_message": "",
+                "data": result,
+            }
+
+        if action == "car_claim_ready":
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.claim_ready_cars(
+                    ready_account.get("token", ""),
+                    timeout_ms=timeout_ms,
+                ),
+                reason="car:claim_ready",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": response.get("message", "未知错误"),
+                    "data": {},
+                }
+
+            data = response.get("data", {}) or {}
+            claimed_count = int(data.get("claimedCount") or 0)
+            failures = data.get("failures", []) or []
+            if claimed_count <= 0 and not failures:
+                data["message"] = "当前没有可收取车辆。"
+                return {
+                    "ok": True,
+                    "status": "empty",
+                    "error_message": "",
+                    "data": data,
+                }
+
+            if failures:
+                data["message"] = "主动收车已执行，但存在失败车辆。"
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": "主动收车存在失败项",
+                    "data": data,
+                }
+
+            data["message"] = "主动收车已完成。"
+            return {
+                "ok": True,
+                "status": "success",
+                "error_message": "",
+                "data": data,
+            }
+
+        if action == "smart_send_car":
+            if not self._is_car_send_open_now():
+                return {
+                    "ok": True,
+                    "status": "empty",
+                    "error_message": "",
+                    "data": {
+                        "processedCount": 0,
+                        "sentCars": [],
+                        "refreshedCars": [],
+                        "failures": [],
+                        "idleCountBefore": 0,
+                        "idleCountAfter": 0,
+                        "message": self._get_car_send_block_reason()
+                        or "当前不在发车时段。",
+                    },
+                }
+
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.run_smart_car_send(
+                    ready_account.get("token", ""),
+                    timeout_ms=timeout_ms,
+                ),
+                reason="car:smart_send",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": response.get("message", "未知错误"),
+                    "data": {},
+                }
+
+            data = response.get("data", {}) or {}
+            if int(data.get("processedCount") or 0) <= 0:
+                data["message"] = "当前没有待发车辆。"
+                return {
+                    "ok": True,
+                    "status": "empty",
+                    "error_message": "",
+                    "data": data,
+                }
+
+            if (data.get("failures") or []) or int(data.get("idleCountAfter") or 0) > 0:
+                data["message"] = "智能发车已执行，但仍有未发车辆或失败项。"
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error_message": "智能发车未完全处理所有车辆",
+                    "data": data,
+                }
+
+            data["message"] = "智能发车已完成。"
+            return {
+                "ok": True,
+                "status": "success",
+                "error_message": "",
+                "data": data,
+            }
+
+        return {
+            "ok": False,
+            "status": "failed",
+            "error_message": f"不支持的赛车动作: {action}",
+            "data": {},
+        }
+
+    def _format_action_task_result_text(
+        self,
+        account: dict[str, Any],
+        schedule: dict[str, Any],
+        data: dict[str, Any],
+    ) -> str:
+        category = str(schedule.get("category") or "").strip().lower()
+        action = str(schedule.get("action") or "").strip()
+        if category == "resource":
+            return self._format_resource_result_text(account, data)
+        if category == "dungeon":
+            return self._format_dungeon_result_text(account, data)
+        if category == "study":
+            return self._build_weekly_study_result_text(account, data)
+        if category == "monthly" and action == "monthly_task_reminder":
+            return self._build_monthly_task_reminder_text(account, data)
+        if category == "monthly" and action == "monthly_fish_progress":
+            return self._build_monthly_fish_result_text(account, data)
+        if category == "car" and action == "car_deadline_reminder":
+            return self._build_car_deadline_reminder_text(account, data)
+        if category == "car" and action == "car_claim_reminder":
+            return self._build_car_claim_reminder_text(account, data)
+        if category == "car" and action == "car_claim_ready":
+            return self._build_car_claim_ready_result_text(account, data)
+        if category == "car" and action == "smart_send_car":
+            return self._build_car_smart_send_result_text(account, data)
+        return str(data.get("message") or "").strip()
+
     def _schedule_usage(self) -> str:
         return (
             "定时命令\n\n"
@@ -2454,6 +3369,30 @@ class XyzwPlugin(Star):
             "/xyzw 定时 副本 开启 <HH:MM> <副本命令参数...>\n"
             "/xyzw 定时 副本 关闭 <副本命令参数...>\n"
             "/xyzw 定时 副本 执行 <副本命令参数...>\n\n"
+            "/xyzw 定时 大冲关 查看\n"
+            "/xyzw 定时 大冲关 开启 [周几] <HH:MM> [别名或ID前缀]\n"
+            "/xyzw 定时 大冲关 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 大冲关 执行 [别名或ID前缀]\n\n"
+            "/xyzw 定时 月度 查看\n"
+            "/xyzw 定时 月度 提醒 开启 <HH:MM> [别名或ID前缀]\n"
+            "/xyzw 定时 月度 提醒 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 月度 提醒 执行 [别名或ID前缀]\n"
+            "/xyzw 定时 月度 钓鱼 开启 <HH:MM> [别名或ID前缀]\n"
+            "/xyzw 定时 月度 钓鱼 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 月度 钓鱼 执行 [别名或ID前缀]\n\n"
+            "/xyzw 定时 赛车 查看\n"
+            "/xyzw 定时 赛车 提醒 开启 <HH:MM> [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 提醒 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 提醒 执行 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 智能发车 开启 <HH:MM> [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 智能发车 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 智能发车 执行 [别名或ID前缀]\n\n"
+            "/xyzw 定时 赛车 收车提醒 开启 [HH:MM] [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 收车提醒 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 收车提醒 执行 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 主动收车 开启 [HH:MM] [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 主动收车 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 赛车 主动收车 执行 [别名或ID前缀]\n\n"
             "/xyzw 定时 活动 查看\n"
             "/xyzw 定时 活动 开启 <梦境|宝库> [HH:MM]\n"
             "/xyzw 定时 活动 关闭 <梦境|宝库>\n\n"
@@ -2461,6 +3400,7 @@ class XyzwPlugin(Star):
             f"默认挂机提醒间隔: {self.hangup_reminder_default_interval_minutes} 分钟\n"
             f"默认护卫成员提醒间隔: {self.helper_member_reminder_default_interval_minutes} 分钟\n"
             "默认活动提醒时间: 00:00\n"
+            "说明: 大冲关默认按周一执行；月度任务固定在月末执行；赛车禁发提醒与智能发车固定在周一至周三生效；赛车收车提醒与主动收车默认每日 23:55。\n"
             "通知渠道固定为群广播，请先使用 /xyzw 通知 绑定本群。"
         )
 
@@ -2476,6 +3416,17 @@ class XyzwPlugin(Star):
         if minutes > 0:
             return f"{minutes}分{secs}秒"
         return f"{secs}秒"
+
+    def _format_super_car_status_text(self, result: dict[str, Any]) -> str:
+        if not result.get("superCarUnlocked"):
+            return "未开通"
+        remaining_seconds = int(result.get("superCarRemainingSeconds") or 0)
+        if remaining_seconds <= 0:
+            return "已开通"
+        days, remainder = divmod(remaining_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes = remainder // 60
+        return f"已开通（剩余 {days}天{hours}小时{minutes}分）"
 
     def _format_helper_member_ids_text(self, member_ids: Any) -> str:
         if not isinstance(member_ids, list):
@@ -2581,7 +3532,7 @@ class XyzwPlugin(Star):
                 f"{index}. {schedule.get('label') or '-'} [{enabled_text}]"
             )
             lines.append(f"   账号: {alias}")
-            lines.append(f"   时间: {schedule.get('schedule_time') or '-'}")
+            lines.append(f"   规则: {self._format_schedule_rule_text(schedule)}")
             lines.append(
                 f"   状态: {self._scheduled_action_status_text(schedule.get('last_status'))}"
             )
@@ -2673,6 +3624,9 @@ class XyzwPlugin(Star):
         activity_reminders = self.storage.list_activity_reminders(user_id)
         resource_tasks = self.storage.list_action_tasks(user_id, category="resource")
         dungeon_tasks = self.storage.list_action_tasks(user_id, category="dungeon")
+        study_tasks = self.storage.list_action_tasks(user_id, category="study")
+        monthly_tasks = self.storage.list_action_tasks(user_id, category="monthly")
+        car_tasks = self.storage.list_action_tasks(user_id, category="car")
         if (
             not reminders
             and not hangup_reminders
@@ -2681,6 +3635,9 @@ class XyzwPlugin(Star):
             and not activity_reminders
             and not resource_tasks
             and not dungeon_tasks
+            and not study_tasks
+            and not monthly_tasks
+            and not car_tasks
         ):
             lines.append("")
             lines.append("当前还没有启用任何定时任务。")
@@ -2801,6 +3758,33 @@ class XyzwPlugin(Star):
                 user_id,
                 dungeon_tasks,
                 "dungeon",
+            )
+
+        if study_tasks:
+            lines.append("")
+            self._append_action_task_schedule_lines(
+                lines,
+                user_id,
+                study_tasks,
+                "study",
+            )
+
+        if monthly_tasks:
+            lines.append("")
+            self._append_action_task_schedule_lines(
+                lines,
+                user_id,
+                monthly_tasks,
+                "monthly",
+            )
+
+        if car_tasks:
+            lines.append("")
+            self._append_action_task_schedule_lines(
+                lines,
+                user_id,
+                car_tasks,
+                "car",
             )
 
         if activity_reminders:
@@ -3154,7 +4138,7 @@ class XyzwPlugin(Star):
             f"XYZW 定时{category_label}结果",
             f"账号: {account.get('alias')}",
             f"任务: {schedule.get('label') or '-'}",
-            f"时间: {schedule.get('schedule_time') or '-'}",
+            f"规则: {self._format_schedule_rule_text(schedule)}",
             f"状态: {result.get('status_text') or '-'}",
         ]
         error_message = str(result.get("error_message") or "").strip()
@@ -3181,7 +4165,7 @@ class XyzwPlugin(Star):
             f"定时{category_label}执行",
             f"- 别名: {account.get('alias')}",
             f"- 任务: {schedule.get('label') or '-'}",
-            f"- 时间: {schedule.get('schedule_time') or '-'}",
+            f"- 规则: {self._format_schedule_rule_text(schedule)}",
             f"- 状态: {result.get('status_text') or '-'}",
         ]
         if result.get("notified"):
@@ -3273,7 +4257,25 @@ class XyzwPlugin(Star):
         if (now_local.hour, now_local.minute) < (hour, minute):
             return False
 
-        return str(schedule.get("last_run_date") or "") != self._local_date_key(now_local)
+        schedule_type = str(schedule.get("schedule_type") or "daily").strip().lower()
+        schedule_rule = schedule.get("schedule_rule") or {}
+        last_run_date = str(schedule.get("last_run_date") or "")
+        today_key = self._local_date_key(now_local)
+
+        if schedule_type == "weekly":
+            weekdays = schedule_rule.get("weekdays") or [0]
+            normalized_weekdays = self._parse_weekday_list([str(item) for item in weekdays])
+            if now_local.weekday() not in set(normalized_weekdays or [0]):
+                return False
+            return last_run_date != today_key
+
+        if schedule_type == "month_end":
+            next_day = now_local + timedelta(days=1)
+            if next_day.day != 1:
+                return False
+            return last_run_date != today_key
+
+        return last_run_date != today_key
 
     def _is_daily_task_due(self, schedule: dict[str, Any]) -> bool:
         return self._is_time_based_schedule_due(schedule)
@@ -4290,7 +5292,7 @@ class XyzwPlugin(Star):
         now_iso = self._now_iso()
         today_key = self._local_date_key()
 
-        if not job_id or category not in {"resource", "dungeon"} or not action:
+        if not job_id or category not in {"resource", "dungeon", "study", "monthly", "car"} or not action:
             return {
                 "success": False,
                 "notified": False,
@@ -4355,12 +5357,33 @@ class XyzwPlugin(Star):
                     options=options,
                     timeout_ms=timeout_ms,
                 )
-            else:
+            elif category == "dungeon":
                 execution = await self._run_dungeon_action_request(
                     user_id=user_id,
                     account=account,
                     action=action,
                     options=options,
+                    timeout_ms=timeout_ms,
+                )
+            elif category == "study":
+                execution = await self._run_study_action_request(
+                    user_id=user_id,
+                    account=account,
+                    action=action,
+                    timeout_ms=timeout_ms,
+                )
+            elif category == "monthly":
+                execution = await self._run_monthly_action_request(
+                    user_id=user_id,
+                    account=account,
+                    action=action,
+                    timeout_ms=timeout_ms,
+                )
+            else:
+                execution = await self._run_car_action_request(
+                    user_id=user_id,
+                    account=account,
+                    action=action,
                     timeout_ms=timeout_ms,
                 )
 
@@ -4369,30 +5392,34 @@ class XyzwPlugin(Star):
                 "last_run_date": today_key,
                 "last_run_at": now_iso,
             }
+            status = str(
+                execution.get("status")
+                or ("success" if execution.get("ok") else "failed")
+            ).strip().lower()
+            result_text = self._format_action_task_result_text(
+                account,
+                schedule,
+                data,
+            )
 
             if execution.get("ok"):
-                result_text = (
-                    self._format_resource_result_text(account, data)
-                    if category == "resource"
-                    else self._format_dungeon_result_text(account, data)
-                )
+                summary_message = str(
+                    data.get("message")
+                    or label
+                    or "执行完成"
+                ).strip()
                 runtime_fields.update(
-                    last_status="success",
+                    last_status=status,
                     last_error_message="",
                     last_error_at="",
-                    last_result_message=str(
-                        data.get("message")
-                        or data.get("label")
-                        or label
-                        or "执行完成"
-                    ).strip(),
+                    last_result_message=summary_message,
                 )
                 result = {
-                    "success": True,
+                    "success": status in {"success", "empty"},
                     "notified": False,
-                    "status_text": self._scheduled_action_status_text("success"),
+                    "status_text": self._scheduled_action_status_text(status),
                     "error_message": "",
-                    "message": f"定时{self._scheduled_action_category_label(category)}执行完成。",
+                    "message": summary_message,
                     "result_text": result_text,
                     "action_result": data,
                 }
@@ -4410,11 +5437,11 @@ class XyzwPlugin(Star):
                     "status_text": self._scheduled_action_status_text("failed"),
                     "error_message": error_message,
                     "message": f"定时{self._scheduled_action_category_label(category)}执行失败。",
-                    "result_text": "",
+                    "result_text": result_text if data else "",
                     "action_result": data,
                 }
 
-            if allow_notify:
+            if allow_notify and status != "empty":
                 notify_result = await self.notifier.push_group_message(
                     user_id=user_id,
                     text=self._build_action_task_notification_message(
@@ -5461,6 +6488,9 @@ class XyzwPlugin(Star):
             candidate = tokens.tokens[2].lower()
             if candidate in {"查看", "状态", "概览"}:
                 selector = " ".join(tokens.tokens[3:]).strip()
+            elif candidate in {"智能发车", "智能", "smart"}:
+                action = "智能发车"
+                selector = " ".join(tokens.tokens[3:]).strip()
             elif candidate in {"护卫成员", "护卫", "成员", "helpers", "helper"}:
                 action = "护卫成员"
                 helper_member_selector = " ".join(tokens.tokens[3:]).strip()
@@ -5529,6 +6559,35 @@ class XyzwPlugin(Star):
                     data,
                     helper_member_selector,
                 )
+            )
+            return
+
+        if action == "智能发车":
+            account, error_text = self._resolve_account_or_text(user_id, selector)
+            if not account:
+                yield event.plain_result(error_text or self._car_usage())
+                return
+
+            response = await self._call_with_account_token_ready(
+                user_id,
+                account,
+                lambda ready_account: self.sidecar.run_manual_smart_car_send(
+                    ready_account.get("token", ""),
+                    helper_whitelist=self._default_smart_car_helper_whitelist(),
+                    max_cars=4,
+                    timeout_ms=self.manual_smart_car_timeout_ms,
+                ),
+                reason="manual_smart_car_send",
+            )
+            if not response.get("ok"):
+                yield event.plain_result(
+                    f"智能发车失败: {response.get('message', '未知错误')}"
+                )
+                return
+
+            data = response.get("data", {}) or {}
+            yield event.plain_result(
+                self._format_manual_smart_car_result_text(account, data)
             )
             return
 
@@ -5825,6 +6884,12 @@ class XyzwPlugin(Star):
             "resource",
             "副本",
             "dungeon",
+            "大冲关",
+            "study",
+            "月度",
+            "monthly",
+            "赛车",
+            "racing",
             "活动",
             "activity",
         }:
@@ -6379,6 +7444,382 @@ class XyzwPlugin(Star):
                     yield event.plain_result(str(result.get("result_text")))
                     return
 
+                yield event.plain_result(
+                    self._format_action_task_run_result(account, schedule, result)
+                )
+                return
+
+            yield event.plain_result(self._schedule_usage())
+            return
+
+        if action in {"大冲关", "study"}:
+            category = "study"
+            category_label = self._scheduled_action_category_label(category)
+            action_name = "weekly_answer"
+            if subaction in {"查看", "list"}:
+                yield event.plain_result(
+                    self._format_action_task_schedule_state(user_id, category)
+                )
+                return
+
+            if subaction in {"开启", "启用", "on"}:
+                if not self.storage.get_notify_group(user_id):
+                    yield event.plain_result(
+                        "请先绑定通知群，再开启定时大冲关。\n"
+                        "使用 /xyzw 通知 绑定本群"
+                    )
+                    return
+
+                spec, error_text = self._parse_study_command_spec(remaining_tokens)
+                if not spec:
+                    yield event.plain_result(error_text or self._schedule_usage())
+                    return
+
+                account, error_text = self._resolve_account_or_text(
+                    user_id,
+                    str(spec.get("selector") or ""),
+                )
+                if not account:
+                    yield event.plain_result(error_text or self._schedule_usage())
+                    return
+
+                self.storage.upsert_action_task(
+                    user_id=user_id,
+                    account_id=str(account.get("account_id") or ""),
+                    category=category,
+                    action=action_name,
+                    label=str(spec.get("label") or ""),
+                    schedule_time=str(spec.get("schedule_time") or ""),
+                    schedule_type=str(spec.get("schedule_type") or "weekly"),
+                    schedule_rule=spec.get("schedule_rule"),
+                    timeout_ms=spec.get("timeout_ms"),
+                    enabled=True,
+                )
+                yield event.plain_result(
+                    f"已开启定时{category_label}。\n"
+                    f"- 账号: {account.get('alias')}\n"
+                    f"- 规则: {self._format_schedule_rule_text(spec)}\n"
+                    "- 通知渠道: 群广播"
+                )
+                return
+
+            selector = " ".join(remaining_tokens).strip()
+            account, error_text = self._resolve_account_or_text(user_id, selector)
+            if not account:
+                yield event.plain_result(error_text or self._schedule_usage())
+                return
+
+            if subaction in {"关闭", "禁用", "off"}:
+                try:
+                    self.storage.disable_action_task(
+                        user_id=user_id,
+                        account_id=str(account.get("account_id") or ""),
+                        category=category,
+                        action=action_name,
+                    )
+                except ValueError as exc:
+                    yield event.plain_result(str(exc))
+                    return
+                yield event.plain_result(
+                    f"已关闭定时{category_label}。\n"
+                    f"- 账号: {account.get('alias')}"
+                )
+                return
+
+            if subaction in {"执行", "run", "test"}:
+                schedule = self.storage.get_action_task(
+                    user_id=user_id,
+                    account_id=str(account.get("account_id") or ""),
+                    category=category,
+                    action=action_name,
+                )
+                if not schedule or not schedule.get("enabled"):
+                    yield event.plain_result(
+                        "当前账号还未开启定时大冲关，请先开启。\n"
+                        "/xyzw 定时 大冲关 开启 [周几] <HH:MM> [别名或ID前缀]"
+                    )
+                    return
+
+                result = await self._run_action_task_once(
+                    user_id=user_id,
+                    account=account,
+                    schedule=schedule,
+                    allow_notify=False,
+                    force_run=True,
+                )
+                if result.get("result_text"):
+                    yield event.plain_result(str(result.get("result_text")))
+                    return
+                yield event.plain_result(
+                    self._format_action_task_run_result(account, schedule, result)
+                )
+                return
+
+            yield event.plain_result(self._schedule_usage())
+            return
+
+        if action in {"月度", "monthly"}:
+            category = "monthly"
+            category_label = self._scheduled_action_category_label(category)
+            if subaction in {"查看", "list"}:
+                yield event.plain_result(
+                    self._format_action_task_schedule_state(user_id, category)
+                )
+                return
+
+            if subaction not in {"提醒", "remind", "任务", "task", "钓鱼", "fish", "进度"}:
+                yield event.plain_result(self._schedule_usage())
+                return
+
+            if not remaining_tokens:
+                yield event.plain_result(self._schedule_usage())
+                return
+
+            action_name = (
+                "monthly_task_reminder"
+                if subaction in {"提醒", "remind", "任务", "task"}
+                else "monthly_fish_progress"
+            )
+            verb = remaining_tokens[0].lower()
+            command_tokens = remaining_tokens[1:]
+
+            if verb in {"开启", "启用", "on"}:
+                if not self.storage.get_notify_group(user_id):
+                    yield event.plain_result(
+                        f"请先绑定通知群，再开启定时{category_label}。\n"
+                        "使用 /xyzw 通知 绑定本群"
+                    )
+                    return
+
+                spec, error_text = self._parse_monthly_command_spec(
+                    subaction,
+                    command_tokens,
+                )
+                if not spec:
+                    yield event.plain_result(error_text or self._schedule_usage())
+                    return
+
+                account, error_text = self._resolve_account_or_text(
+                    user_id,
+                    str(spec.get("selector") or ""),
+                )
+                if not account:
+                    yield event.plain_result(error_text or self._schedule_usage())
+                    return
+
+                self.storage.upsert_action_task(
+                    user_id=user_id,
+                    account_id=str(account.get("account_id") or ""),
+                    category=category,
+                    action=action_name,
+                    label=str(spec.get("label") or ""),
+                    schedule_time=str(spec.get("schedule_time") or ""),
+                    schedule_type=str(spec.get("schedule_type") or "month_end"),
+                    schedule_rule=spec.get("schedule_rule"),
+                    timeout_ms=spec.get("timeout_ms"),
+                    enabled=True,
+                )
+                yield event.plain_result(
+                    f"已开启定时{category_label}。\n"
+                    f"- 账号: {account.get('alias')}\n"
+                    f"- 任务: {spec.get('label') or '-'}\n"
+                    f"- 规则: {self._format_schedule_rule_text(spec)}\n"
+                    "- 通知渠道: 群广播"
+                )
+                return
+
+            selector = " ".join(command_tokens).strip()
+            account, error_text = self._resolve_account_or_text(user_id, selector)
+            if not account:
+                yield event.plain_result(error_text or self._schedule_usage())
+                return
+
+            if verb in {"关闭", "禁用", "off"}:
+                try:
+                    self.storage.disable_action_task(
+                        user_id=user_id,
+                        account_id=str(account.get("account_id") or ""),
+                        category=category,
+                        action=action_name,
+                    )
+                except ValueError as exc:
+                    yield event.plain_result(str(exc))
+                    return
+                yield event.plain_result(
+                    f"已关闭定时{category_label}。\n"
+                    f"- 账号: {account.get('alias')}\n"
+                    f"- 任务: {self._monthly_action_label(action_name)}"
+                )
+                return
+
+            if verb in {"执行", "run", "test"}:
+                schedule = self.storage.get_action_task(
+                    user_id=user_id,
+                    account_id=str(account.get("account_id") or ""),
+                    category=category,
+                    action=action_name,
+                )
+                if not schedule or not schedule.get("enabled"):
+                    yield event.plain_result(
+                        f"当前任务还未开启定时{category_label}，请先开启。\n"
+                        "/xyzw 定时 月度 提醒|钓鱼 开启 <HH:MM> [别名或ID前缀]"
+                    )
+                    return
+
+                result = await self._run_action_task_once(
+                    user_id=user_id,
+                    account=account,
+                    schedule=schedule,
+                    allow_notify=False,
+                    force_run=True,
+                )
+                if result.get("result_text"):
+                    yield event.plain_result(str(result.get("result_text")))
+                    return
+                yield event.plain_result(
+                    self._format_action_task_run_result(account, schedule, result)
+                )
+                return
+
+            yield event.plain_result(self._schedule_usage())
+            return
+
+        if action in {"赛车", "racing"}:
+            category = "car"
+            category_label = self._scheduled_action_category_label(category)
+            if subaction in {"查看", "list"}:
+                yield event.plain_result(
+                    self._format_action_task_schedule_state(user_id, category)
+                )
+                return
+
+            if subaction not in {
+                "提醒",
+                "remind",
+                "智能",
+                "smart",
+                "智能发车",
+                "收车提醒",
+                "提醒收车",
+                "主动收车",
+                "自动收车",
+                "收车",
+                "claim",
+            }:
+                yield event.plain_result(self._schedule_usage())
+                return
+
+            if not remaining_tokens:
+                yield event.plain_result(self._schedule_usage())
+                return
+
+            parser = self._parse_car_command_spec
+            if subaction in {"提醒", "remind"}:
+                action_name = "car_deadline_reminder"
+            elif subaction in {"智能", "smart", "智能发车"}:
+                action_name = "smart_send_car"
+            elif subaction in {"收车提醒", "提醒收车"}:
+                action_name = "car_claim_reminder"
+                parser = self._parse_car_claim_command_spec
+            else:
+                action_name = "car_claim_ready"
+                parser = self._parse_car_claim_command_spec
+            verb = remaining_tokens[0].lower()
+            command_tokens = remaining_tokens[1:]
+
+            if verb in {"开启", "启用", "on"}:
+                if not self.storage.get_notify_group(user_id):
+                    yield event.plain_result(
+                        f"请先绑定通知群，再开启定时{category_label}。\n"
+                        "使用 /xyzw 通知 绑定本群"
+                    )
+                    return
+
+                spec, error_text = parser(
+                    subaction,
+                    command_tokens,
+                )
+                if not spec:
+                    yield event.plain_result(error_text or self._schedule_usage())
+                    return
+
+                account, error_text = self._resolve_account_or_text(
+                    user_id,
+                    str(spec.get("selector") or ""),
+                )
+                if not account:
+                    yield event.plain_result(error_text or self._schedule_usage())
+                    return
+
+                self.storage.upsert_action_task(
+                    user_id=user_id,
+                    account_id=str(account.get("account_id") or ""),
+                    category=category,
+                    action=action_name,
+                    label=str(spec.get("label") or ""),
+                    schedule_time=str(spec.get("schedule_time") or ""),
+                    schedule_type=str(spec.get("schedule_type") or "weekly"),
+                    schedule_rule=spec.get("schedule_rule"),
+                    timeout_ms=spec.get("timeout_ms"),
+                    enabled=True,
+                )
+                yield event.plain_result(
+                    f"已开启定时{category_label}。\n"
+                    f"- 账号: {account.get('alias')}\n"
+                    f"- 任务: {spec.get('label') or '-'}\n"
+                    f"- 规则: {self._format_schedule_rule_text(spec)}\n"
+                    "- 通知渠道: 群广播"
+                )
+                return
+
+            selector = " ".join(command_tokens).strip()
+            account, error_text = self._resolve_account_or_text(user_id, selector)
+            if not account:
+                yield event.plain_result(error_text or self._schedule_usage())
+                return
+
+            if verb in {"关闭", "禁用", "off"}:
+                try:
+                    self.storage.disable_action_task(
+                        user_id=user_id,
+                        account_id=str(account.get("account_id") or ""),
+                        category=category,
+                        action=action_name,
+                    )
+                except ValueError as exc:
+                    yield event.plain_result(str(exc))
+                    return
+                yield event.plain_result(
+                    f"已关闭定时{category_label}。\n"
+                    f"- 账号: {account.get('alias')}\n"
+                    f"- 任务: {self._car_action_label(action_name)}"
+                )
+                return
+
+            if verb in {"执行", "run", "test"}:
+                schedule = self.storage.get_action_task(
+                    user_id=user_id,
+                    account_id=str(account.get("account_id") or ""),
+                    category=category,
+                    action=action_name,
+                )
+                if not schedule or not schedule.get("enabled"):
+                    yield event.plain_result(
+                        f"当前任务还未开启定时{category_label}，请先开启。\n"
+                        "/xyzw 定时 赛车 提醒|智能发车|收车提醒|主动收车 开启 ..."
+                    )
+                    return
+
+                result = await self._run_action_task_once(
+                    user_id=user_id,
+                    account=account,
+                    schedule=schedule,
+                    allow_notify=False,
+                    force_run=True,
+                )
+                if result.get("result_text"):
+                    yield event.plain_result(str(result.get("result_text")))
+                    return
                 yield event.plain_result(
                     self._format_action_task_run_result(account, schedule, result)
                 )
