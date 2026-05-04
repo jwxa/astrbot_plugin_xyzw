@@ -566,6 +566,8 @@ export async function runMonthlyFishProgressTask(client, timeoutMs) {
   };
 }
 
+// Deprecated: kept only for backward compatibility. New flows should use
+// runManualSmartCarSendTask via /v1/car/manual-smart-send.
 export async function runSmartCarSendTask(client, timeoutMs) {
   let state = await fetchCarState(client, timeoutMs);
   const before = state.overview;

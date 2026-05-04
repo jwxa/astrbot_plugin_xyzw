@@ -137,6 +137,11 @@ XYZW_SIDECAR_PORT=8099
 - 每辆车最多刷新 5 次
 - 单车刷新或发车失败会自动重试 1 次
 
+说明：
+
+- `/xyzw 车 智能发车` 与 `定时 赛车 智能发车` 现在都统一走独立 sidecar 逻辑
+- 旧的 `/v1/car/smart-send` 仅保留兼容，不再作为推荐入口
+
 相关配置：
 
 - `smart_car_helper_whitelist`

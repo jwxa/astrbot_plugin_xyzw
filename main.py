@@ -3268,8 +3268,10 @@ class XyzwPlugin(Star):
             response = await self._call_with_account_token_ready(
                 user_id,
                 account,
-                lambda ready_account: self.sidecar.run_smart_car_send(
+                lambda ready_account: self.sidecar.run_manual_smart_car_send(
                     ready_account.get("token", ""),
+                    helper_whitelist=self._default_smart_car_helper_whitelist(),
+                    max_cars=4,
                     timeout_ms=timeout_ms,
                 ),
                 reason="car:smart_send",
