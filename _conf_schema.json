@@ -59,12 +59,5 @@
     "default": 30,
     "min": 5,
     "max": 720
-  },
-  "car_helper_query_timeout_ms": {
-    "description": "护卫成员查询时调用 sidecar 的超时（毫秒）",
-    "type": "int",
-    "default": 30000,
-    "min": 5000,
-    "max": 120000
   }
 }

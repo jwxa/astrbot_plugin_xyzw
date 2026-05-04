@@ -90,12 +90,6 @@ class XyzwPlugin(Star):
             min_value=5,
             max_value=720,
         )
-        self.car_helper_query_timeout_ms = self._read_int_config(
-            "car_helper_query_timeout_ms",
-            default=30000,
-            min_value=5000,
-            max_value=120000,
-        )
         self.wechat_qrcode_poll_interval_ms = self._read_int_config(
             "wechat_qrcode_poll_interval_ms",
             default=1000,
@@ -4855,7 +4849,7 @@ class XyzwPlugin(Star):
                 ready_account.get("token", ""),
                 member_ids=member_ids,
                 keyword=None,
-                timeout_ms=self.car_helper_query_timeout_ms,
+                timeout_ms=self._request_timeout_ms(minimum_ms=5000),
             ),
             reason="helper_member_reminder",
         )
@@ -6579,7 +6573,7 @@ class XyzwPlugin(Star):
                     ready_account.get("token", ""),
                     member_ids=member_ids,
                     keyword=None if member_ids else helper_member_selector or None,
-                    timeout_ms=self.car_helper_query_timeout_ms,
+                    timeout_ms=self._request_timeout_ms(minimum_ms=5000),
                 ),
                 reason="car_helpers",
             )
