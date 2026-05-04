@@ -2163,7 +2163,7 @@ class XyzwPlugin(Star):
         return {
             "resource": "资源",
             "dungeon": "副本",
-            "study": "大冲关",
+            "study": "答题",
             "monthly": "月度任务",
             "car": "疯狂赛车",
         }.get(str(category or "").strip().lower(), str(category or "-"))
@@ -3402,10 +3402,10 @@ class XyzwPlugin(Star):
             "/xyzw 定时 副本 开启 <HH:MM> <副本命令参数...>\n"
             "/xyzw 定时 副本 关闭 <副本命令参数...>\n"
             "/xyzw 定时 副本 执行 <副本命令参数...>\n\n"
-            "/xyzw 定时 大冲关 查看\n"
-            "/xyzw 定时 大冲关 开启 [周几] <HH:MM> [别名或ID前缀]\n"
-            "/xyzw 定时 大冲关 关闭 [别名或ID前缀]\n"
-            "/xyzw 定时 大冲关 执行 [别名或ID前缀]\n\n"
+            "/xyzw 定时 答题 查看\n"
+            "/xyzw 定时 答题 开启 [周几] <HH:MM> [别名或ID前缀]\n"
+            "/xyzw 定时 答题 关闭 [别名或ID前缀]\n"
+            "/xyzw 定时 答题 执行 [别名或ID前缀]\n\n"
             "/xyzw 定时 月度 查看\n"
             "/xyzw 定时 月度 提醒 开启 <HH:MM> [别名或ID前缀]\n"
             "/xyzw 定时 月度 提醒 关闭 [别名或ID前缀]\n"
@@ -3433,7 +3433,7 @@ class XyzwPlugin(Star):
             f"默认挂机提醒间隔: {self.hangup_reminder_default_interval_minutes} 分钟\n"
             f"默认护卫成员提醒间隔: {self.helper_member_reminder_default_interval_minutes} 分钟\n"
             "默认活动提醒时间: 00:00\n"
-            "说明: 大冲关默认按周一执行；月度任务固定在月末执行；赛车禁发提醒与智能发车固定在周一至周三生效；赛车收车提醒与主动收车默认每日 23:55。\n"
+            "说明: 答题默认按周一执行；月度任务固定在月末执行；赛车禁发提醒与智能发车固定在周一至周三生效；赛车收车提醒与主动收车默认每日 23:55。\n"
             "通知渠道固定为群广播，请先使用 /xyzw 通知 绑定本群。"
         )
 
@@ -5557,7 +5557,7 @@ class XyzwPlugin(Star):
                 yield result
             return
 
-        if subcommand in {"车", "车辆", "赛车"}:
+        if subcommand == "赛车":
             async for result in self._handle_car(event, tokens):
                 yield result
             return
@@ -5567,12 +5567,12 @@ class XyzwPlugin(Star):
                 yield result
             return
 
-        if subcommand in {"副本", "dungeon"}:
+        if subcommand == "副本":
             async for result in self._handle_dungeon(event, tokens):
                 yield result
             return
 
-        if subcommand in {"资源", "resource"}:
+        if subcommand == "资源":
             async for result in self._handle_resource(event, tokens):
                 yield result
             return
@@ -5582,7 +5582,7 @@ class XyzwPlugin(Star):
                 yield result
             return
 
-        if subcommand in {"定时", "schedule"}:
+        if subcommand == "定时":
             async for result in self._handle_schedule(event, tokens):
                 yield result
             return
@@ -6521,20 +6521,20 @@ class XyzwPlugin(Star):
             candidate = tokens.tokens[2].lower()
             if candidate in {"查看", "状态", "概览"}:
                 selector = " ".join(tokens.tokens[3:]).strip()
-            elif candidate in {"智能发车", "智能", "smart"}:
+            elif candidate == "智能发车":
                 action = "智能发车"
                 remaining_tokens = [str(token or "").strip() for token in tokens.tokens[3:]]
                 if remaining_tokens:
                     subcandidate = remaining_tokens[0].lower()
-                    if subcandidate in {"白名单", "helper", "helpers", "whitelist"}:
+                    if subcandidate == "白名单":
                         action = "智能发车白名单"
                         selector = " ".join(remaining_tokens[1:]).strip()
                     else:
                         selector = " ".join(remaining_tokens).strip()
-            elif candidate in {"护卫成员", "护卫", "成员", "helpers", "helper"}:
+            elif candidate in {"护卫成员", "护卫"}:
                 action = "护卫成员"
                 helper_member_selector = " ".join(tokens.tokens[3:]).strip()
-            elif candidate in {"发车", "发送", "send"}:
+            elif candidate == "发车":
                 action = "发车"
                 if tokens.len < 4:
                     yield event.plain_result(self._car_usage())
@@ -6543,7 +6543,7 @@ class XyzwPlugin(Star):
                 remaining_tokens = [str(token or "").strip() for token in tokens.tokens[4:]]
                 if remaining_tokens:
                     keyword = remaining_tokens[0].lower()
-                    if keyword in {"护卫", "helper", "guard"}:
+                    if keyword == "护卫":
                         if len(remaining_tokens) < 2 or not remaining_tokens[1]:
                             yield event.plain_result(
                                 "发车参数不完整。\n"
@@ -6554,7 +6554,7 @@ class XyzwPlugin(Star):
                         selector = " ".join(remaining_tokens[2:]).strip()
                     else:
                         selector = " ".join(remaining_tokens).strip()
-            elif candidate in {"收车", "领取"}:
+            elif candidate == "收车":
                 action = "收车"
                 selector = " ".join(tokens.tokens[3:]).strip()
             elif candidate in {"help", "帮助"}:
@@ -6999,17 +6999,11 @@ class XyzwPlugin(Star):
             "日常",
             "daily",
             "资源",
-            "resource",
             "副本",
-            "dungeon",
-            "大冲关",
-            "study",
+            "答题",
             "月度",
-            "monthly",
             "赛车",
-            "racing",
             "活动",
-            "activity",
         }:
             yield event.plain_result(self._schedule_usage())
             return
@@ -7110,7 +7104,7 @@ class XyzwPlugin(Star):
             yield event.plain_result(self._schedule_usage())
             return
 
-        if action in {"护卫成员", "护卫", "helper", "helpers"}:
+        if action in {"护卫成员", "护卫"}:
             if subaction in {"查看", "list"}:
                 yield event.plain_result(
                     self._format_helper_member_schedule_state(user_id)
@@ -7216,7 +7210,7 @@ class XyzwPlugin(Star):
             yield event.plain_result(self._schedule_usage())
             return
 
-        if action in {"活动", "activity"}:
+        if action == "活动":
             if subaction in {"查看", "list"}:
                 yield event.plain_result(self._format_activity_schedule_state(user_id))
                 return
@@ -7423,8 +7417,8 @@ class XyzwPlugin(Star):
             yield event.plain_result(self._schedule_usage())
             return
 
-        if action in {"资源", "resource", "副本", "dungeon"}:
-            category = "resource" if action in {"资源", "resource"} else "dungeon"
+        if action in {"资源", "副本"}:
+            category = "resource" if action == "资源" else "dungeon"
             category_label = self._scheduled_action_category_label(category)
             parser = (
                 self._parse_resource_command_spec
@@ -7570,7 +7564,7 @@ class XyzwPlugin(Star):
             yield event.plain_result(self._schedule_usage())
             return
 
-        if action in {"大冲关", "study"}:
+        if action == "答题":
             category = "study"
             category_label = self._scheduled_action_category_label(category)
             action_name = "weekly_answer"
@@ -7583,7 +7577,7 @@ class XyzwPlugin(Star):
             if subaction in {"开启", "启用", "on"}:
                 if not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
-                        "请先绑定通知群，再开启定时大冲关。\n"
+                        "请先绑定通知群，再开启定时答题。\n"
                         "使用 /xyzw 通知 绑定本群"
                     )
                     return
@@ -7653,8 +7647,8 @@ class XyzwPlugin(Star):
                 )
                 if not schedule or not schedule.get("enabled"):
                     yield event.plain_result(
-                        "当前账号还未开启定时大冲关，请先开启。\n"
-                        "/xyzw 定时 大冲关 开启 [周几] <HH:MM> [别名或ID前缀]"
+                        "当前账号还未开启定时答题，请先开启。\n"
+                        "/xyzw 定时 答题 开启 [周几] <HH:MM> [别名或ID前缀]"
                     )
                     return
 
@@ -7676,7 +7670,7 @@ class XyzwPlugin(Star):
             yield event.plain_result(self._schedule_usage())
             return
 
-        if action in {"月度", "monthly"}:
+        if action == "月度":
             category = "monthly"
             category_label = self._scheduled_action_category_label(category)
             if subaction in {"查看", "list"}:
@@ -7802,7 +7796,7 @@ class XyzwPlugin(Star):
             yield event.plain_result(self._schedule_usage())
             return
 
-        if action in {"赛车", "racing"}:
+        if action == "赛车":
             category = "car"
             category_label = self._scheduled_action_category_label(category)
             if subaction in {"查看", "list"}:
@@ -7813,16 +7807,9 @@ class XyzwPlugin(Star):
 
             if subaction not in {
                 "提醒",
-                "remind",
-                "智能",
-                "smart",
                 "智能发车",
                 "收车提醒",
-                "提醒收车",
-                "主动收车",
-                "自动收车",
                 "收车",
-                "claim",
             }:
                 yield event.plain_result(self._schedule_usage())
                 return
@@ -7832,11 +7819,11 @@ class XyzwPlugin(Star):
                 return
 
             parser = self._parse_car_command_spec
-            if subaction in {"提醒", "remind"}:
+            if subaction == "提醒":
                 action_name = "car_deadline_reminder"
-            elif subaction in {"智能", "smart", "智能发车"}:
+            elif subaction == "智能发车":
                 action_name = "smart_send_car"
-            elif subaction in {"收车提醒", "提醒收车"}:
+            elif subaction == "收车提醒":
                 action_name = "car_claim_reminder"
                 parser = self._parse_car_claim_command_spec
             else:
