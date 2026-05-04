@@ -12,9 +12,9 @@
     "min": 3,
     "max": 120
   },
-  "default_notify_mode": {
-    "description": "默认通知策略",
-    "hint": "当前实现固定优先群广播；此配置主要用于初始化兼容。",
+  "notify_mode": {
+    "description": "通知策略",
+    "hint": "群广播会优先发送到已绑定通知群；仅私聊模式下，通知与测试消息都会直接发给当前用户。",
     "type": "string",
     "options": [
       "group_broadcast",
@@ -46,26 +46,12 @@
     "min": 5,
     "max": 720
   },
-  "car_reminder_check_timeout_ms": {
-    "description": "收车提醒查询车辆状态时调用 sidecar 的超时（毫秒）",
-    "type": "int",
-    "default": 15000,
-    "min": 5000,
-    "max": 120000
-  },
   "hangup_reminder_default_interval_minutes": {
     "description": "挂机提醒的默认检查间隔（分钟）",
     "type": "int",
     "default": 15,
     "min": 5,
     "max": 720
-  },
-  "hangup_reminder_check_timeout_ms": {
-    "description": "挂机提醒查询账号状态时调用 sidecar 的超时（毫秒）",
-    "type": "int",
-    "default": 15000,
-    "min": 5000,
-    "max": 120000
   },
   "helper_member_reminder_default_interval_minutes": {
     "description": "护卫成员提醒的默认检查间隔（分钟）",
@@ -74,18 +60,11 @@
     "min": 5,
     "max": 720
   },
-  "manual_smart_car_timeout_ms": {
-    "description": "手动智能发车调用 sidecar 的超时（毫秒）",
+  "car_helper_query_timeout_ms": {
+    "description": "护卫成员查询时调用 sidecar 的超时（毫秒）",
     "type": "int",
-    "default": 180000,
-    "min": 10000,
-    "max": 300000
-  },
-  "daily_task_timeout_ms": {
-    "description": "定时日常执行时调用 sidecar 的超时（毫秒）",
-    "type": "int",
-    "default": 90000,
-    "min": 10000,
-    "max": 180000
+    "default": 30000,
+    "min": 5000,
+    "max": 120000
   }
 }
