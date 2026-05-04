@@ -210,6 +210,24 @@ def _default_daily_settings() -> dict[str, int]:
     }
 
 
+def _normalize_smart_car_helper_whitelist(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = value.replace("，", ",").split(",")
+    else:
+        items = list(value) if isinstance(value, (list, tuple, set)) else []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        candidate = str(item or "").strip()
+        if not candidate or not candidate.isdigit() or candidate in seen:
+            continue
+        seen.add(candidate)
+        normalized.append(candidate)
+    return normalized
+
+
 def _normalize_daily_settings(settings: Any) -> dict[str, int]:
     payload = settings if isinstance(settings, dict) else {}
     defaults = _default_daily_settings()
@@ -334,10 +352,20 @@ class XyzwStorage:
 
     def _ensure_account_shape(self, account: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(account, dict):
-            return {"daily_settings": _default_daily_settings()}
+            return {
+                "daily_settings": _default_daily_settings(),
+                "smart_car_settings": {"helper_whitelist": []},
+            }
         account["daily_settings"] = _normalize_daily_settings(
             account.get("daily_settings")
         )
+        smart_car_settings = account.get("smart_car_settings")
+        if not isinstance(smart_car_settings, dict):
+            smart_car_settings = {}
+        smart_car_settings["helper_whitelist"] = _normalize_smart_car_helper_whitelist(
+            smart_car_settings.get("helper_whitelist")
+        )
+        account["smart_car_settings"] = smart_car_settings
         return account
 
     def ensure_user(self, user_id: str) -> dict[str, Any]:
@@ -1489,6 +1517,11 @@ class XyzwStorage:
             "daily_settings": _normalize_daily_settings(
                 existing.get("daily_settings") if existing else None
             ),
+            "smart_car_settings": {
+                "helper_whitelist": _normalize_smart_car_helper_whitelist(
+                    ((existing or {}).get("smart_car_settings") or {}).get("helper_whitelist")
+                )
+            },
             "updated_at": now,
         }
 
@@ -1574,6 +1607,39 @@ class XyzwStorage:
         user["updated_at"] = now
         self._save()
         return account
+
+    def get_smart_car_helper_whitelist(
+        self,
+        user_id: str,
+        account_id: str,
+    ) -> list[str]:
+        account = self.get_account_by_id(user_id, str(account_id or "").strip())
+        if not account:
+            raise ValueError(f"未找到账号: {account_id}")
+        settings = self._ensure_account_shape(account).get("smart_car_settings") or {}
+        return list(settings.get("helper_whitelist") or [])
+
+    def update_smart_car_helper_whitelist(
+        self,
+        user_id: str,
+        account_id: str,
+        helper_whitelist: list[str] | tuple[str, ...] | set[str] | str | None,
+    ) -> list[str]:
+        user = self.ensure_user(user_id)
+        account = self.get_account_by_id(user_id, str(account_id or "").strip())
+        if not account:
+            raise ValueError(f"未找到账号: {account_id}")
+        normalized = _normalize_smart_car_helper_whitelist(helper_whitelist)
+        now = _now_iso()
+        smart_car_settings = account.get("smart_car_settings")
+        if not isinstance(smart_car_settings, dict):
+            smart_car_settings = {}
+        smart_car_settings["helper_whitelist"] = normalized
+        account["smart_car_settings"] = smart_car_settings
+        account["updated_at"] = now
+        user["updated_at"] = now
+        self._save()
+        return list(normalized)
 
     def set_default_account(self, user_id: str, selector: str) -> dict[str, Any]:
         user = self.ensure_user(user_id)
