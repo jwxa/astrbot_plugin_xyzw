@@ -47,6 +47,9 @@ class XyzwPlugin(Star):
         super().__init__(context)
         self.logger = logger
         self.config = config or {}
+        self.notify_mode = str(
+            self.config.get("notify_mode", "group_broadcast") or "group_broadcast"
+        ).strip() or "group_broadcast"
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_xyzw")
         self.storage = XyzwStorage(self.data_dir)
         self.sidecar = XyzwSidecarClient(
@@ -75,12 +78,6 @@ class XyzwPlugin(Star):
             min_value=5,
             max_value=720,
         )
-        self.car_reminder_check_timeout_ms = self._read_int_config(
-            "car_reminder_check_timeout_ms",
-            default=15000,
-            min_value=5000,
-            max_value=120000,
-        )
         self.hangup_reminder_default_interval_minutes = self._read_int_config(
             "hangup_reminder_default_interval_minutes",
             default=15,
@@ -93,29 +90,11 @@ class XyzwPlugin(Star):
             min_value=5,
             max_value=720,
         )
-        self.hangup_reminder_check_timeout_ms = self._read_int_config(
-            "hangup_reminder_check_timeout_ms",
-            default=15000,
-            min_value=5000,
-            max_value=120000,
-        )
-        self.daily_task_timeout_ms = self._read_int_config(
-            "daily_task_timeout_ms",
-            default=90000,
-            min_value=10000,
-            max_value=180000,
-        )
         self.car_helper_query_timeout_ms = self._read_int_config(
             "car_helper_query_timeout_ms",
             default=30000,
             min_value=5000,
             max_value=120000,
-        )
-        self.manual_smart_car_timeout_ms = self._read_int_config(
-            "manual_smart_car_timeout_ms",
-            default=180000,
-            min_value=10000,
-            max_value=300000,
         )
         self.wechat_qrcode_poll_interval_ms = self._read_int_config(
             "wechat_qrcode_poll_interval_ms",
@@ -150,6 +129,14 @@ class XyzwPlugin(Star):
         if max_value is not None:
             value = min(max_value, value)
         return value
+
+    def _request_timeout_ms(
+        self,
+        minimum_ms: int = 5000,
+        extra_ms: int = 0,
+    ) -> int:
+        base_ms = int(self.sidecar.config.timeout_seconds) * 1000
+        return max(minimum_ms, base_ms + max(0, int(extra_ms)))
 
     async def terminate(self) -> None:
         self._scheduler_stop_event.set()
@@ -200,6 +187,14 @@ class XyzwPlugin(Star):
         bot_self_id = str(event.get_self_id() or "").strip()
         if bot_self_id:
             self._last_bot_self_id = bot_self_id
+
+    def _ensure_notify_mode_initialized(self, user_id: str) -> None:
+        state = self.storage.get_user_state(user_id)
+        notify = state.get("notify", {}) or {}
+        mode = str(notify.get("mode") or "").strip()
+        if mode in {"group_broadcast", "private_only"}:
+            return
+        self.storage.set_notify_mode(user_id, self.notify_mode)
 
     def _build_text_result(
         self,
@@ -301,7 +296,7 @@ class XyzwPlugin(Star):
         return (
             "已收到日常请求，开始后台执行。\n"
             f"- 别名: {alias or '-'}\n"
-            f"- 执行超时: {self.daily_task_timeout_ms} ms\n"
+            f"- 执行超时: {self._request_timeout_ms(minimum_ms=10000, extra_ms=75000)} ms\n"
             "完成后会在当前会话统一回复结果。"
         )
 
@@ -324,7 +319,7 @@ class XyzwPlugin(Star):
                 lambda ready_account: self.sidecar.run_daily_task(
                     ready_account.get("token", ""),
                     options=daily_options,
-                    timeout_ms=self.daily_task_timeout_ms,
+                    timeout_ms=self._request_timeout_ms(minimum_ms=10000, extra_ms=75000),
                 ),
                 reason="manual_daily",
             )
@@ -4487,7 +4482,7 @@ class XyzwPlugin(Star):
             account,
             lambda ready_account: self.sidecar.get_car_overview(
                 ready_account.get("token", ""),
-                timeout_ms=self.car_reminder_check_timeout_ms,
+                timeout_ms=self._request_timeout_ms(minimum_ms=5000),
             ),
             reason="car_reminder",
         )
@@ -4643,7 +4638,7 @@ class XyzwPlugin(Star):
             account,
             lambda ready_account: self.sidecar.describe_account(
                 ready_account.get("token", ""),
-                timeout_ms=self.hangup_reminder_check_timeout_ms,
+                timeout_ms=self._request_timeout_ms(minimum_ms=5000),
             ),
             reason="hangup_reminder",
         )
@@ -5213,7 +5208,7 @@ class XyzwPlugin(Star):
                 lambda ready_account: self.sidecar.run_daily_task(
                     ready_account.get("token", ""),
                     options=daily_options,
-                    timeout_ms=self.daily_task_timeout_ms,
+                    timeout_ms=self._request_timeout_ms(minimum_ms=10000, extra_ms=75000),
                 ),
                 reason="scheduled_daily",
             )
@@ -6478,6 +6473,7 @@ class XyzwPlugin(Star):
 
     async def _handle_status(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         selector = " ".join(tokens.tokens[2:]).strip() if tokens.len >= 3 else ""
         account, error_text = self._resolve_account_or_text(user_id, selector)
 
@@ -6511,6 +6507,7 @@ class XyzwPlugin(Star):
 
     async def _handle_car(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         action = "查看"
         selector = ""
         car_id = ""
@@ -6693,7 +6690,7 @@ class XyzwPlugin(Star):
                         str(account.get("account_id") or ""),
                     ),
                     max_cars=4,
-                    timeout_ms=self.manual_smart_car_timeout_ms,
+                    timeout_ms=self._request_timeout_ms(minimum_ms=10000, extra_ms=165000),
                 ),
                 reason="manual_smart_car_send",
             )
@@ -6837,6 +6834,7 @@ class XyzwPlugin(Star):
 
     async def _handle_daily(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         if tokens.len >= 3 and tokens.tokens[2].lower() in {"配置", "config", "settings"}:
             async for result in self._handle_daily_config(event, tokens):
                 yield result
@@ -6876,6 +6874,7 @@ class XyzwPlugin(Star):
 
     async def _handle_resource(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         if tokens.len < 3:
             yield event.plain_result(self._resource_usage())
             return
@@ -6925,6 +6924,7 @@ class XyzwPlugin(Star):
 
     async def _handle_dungeon(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         if tokens.len < 3:
             yield event.plain_result(self._dungeon_usage())
             return
@@ -6974,6 +6974,7 @@ class XyzwPlugin(Star):
 
     async def _handle_schedule(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         if tokens.len < 3:
             yield event.plain_result(self._schedule_usage())
             return
@@ -7337,7 +7338,7 @@ class XyzwPlugin(Star):
                     f"- 别名: {account.get('alias')}\n"
                     f"- 时间: {schedule_time}\n"
                     "- 通知渠道: 群广播\n"
-                    f"- 执行超时: {self.daily_task_timeout_ms} ms"
+                    f"- 执行超时: {self._request_timeout_ms(minimum_ms=10000, extra_ms=75000)} ms"
                 )
                 return
 
@@ -8022,10 +8023,13 @@ class XyzwPlugin(Star):
 
     async def _handle_notify(self, event: AstrMessageEvent, tokens):
         user_id = self._get_user_id(event)
+        self._ensure_notify_mode_initialized(user_id)
         if tokens.len < 3:
             yield event.plain_result(
                 "通知子命令:\n"
                 "/xyzw 通知 绑定本群\n"
+                "/xyzw 通知 模式 查看\n"
+                "/xyzw 通知 模式 设置 <群广播|仅私聊>\n"
                 "/xyzw 通知 查看\n"
                 "/xyzw 通知 解绑\n"
                 "/xyzw 通知 测试"
@@ -8051,6 +8055,47 @@ class XyzwPlugin(Star):
             )
             return
 
+        if action == "模式":
+            if tokens.len < 4:
+                yield event.plain_result(
+                    "通知模式子命令:\n"
+                    "/xyzw 通知 模式 查看\n"
+                    "/xyzw 通知 模式 设置 <群广播|仅私聊>"
+                )
+                return
+
+            mode_action = str(tokens.tokens[3] or "").strip().lower()
+            if mode_action in {"查看", "list"}:
+                yield event.plain_result(self._format_notify_state(user_id))
+                return
+
+            if mode_action in {"设置", "set"}:
+                if tokens.len < 5:
+                    yield event.plain_result(
+                        "请提供通知策略：群广播 或 仅私聊。"
+                    )
+                    return
+                raw_mode = str(tokens.tokens[4] or "").strip().lower()
+                mapping = {
+                    "群广播": "group_broadcast",
+                    "broadcast": "group_broadcast",
+                    "group_broadcast": "group_broadcast",
+                    "仅私聊": "private_only",
+                    "私聊": "private_only",
+                    "private": "private_only",
+                    "private_only": "private_only",
+                }
+                mode = mapping.get(raw_mode)
+                if not mode:
+                    yield event.plain_result("不支持的通知策略，请使用：群广播 或 仅私聊。")
+                    return
+                self.storage.set_notify_mode(user_id, mode)
+                yield event.plain_result(self._format_notify_state(user_id))
+                return
+
+            yield event.plain_result("未知通知模式子命令。")
+            return
+
         if action == "查看":
             yield event.plain_result(self._format_notify_state(user_id))
             return
@@ -8063,7 +8108,7 @@ class XyzwPlugin(Star):
         if action == "测试":
             result = await self.notifier.push_group_message(
                 user_id=user_id,
-                text="这是一条 XYZW 插件发出的群广播测试消息。",
+                text="这是一条 XYZW 插件发出的测试通知消息。",
             )
             if result.success:
                 yield event.plain_result(f"测试通知已发送，channel={result.channel}")

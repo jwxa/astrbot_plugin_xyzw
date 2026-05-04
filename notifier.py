@@ -126,6 +126,12 @@ class NotificationRouter:
         return MessageChain([Nodes(nodes)])
 
     async def push_group_message(self, user_id: str, text: str) -> NotifyResult:
+        user_state = self.storage.get_user_state(user_id)
+        notify = user_state.get("notify", {}) or {}
+        mode = str(notify.get("mode") or "group_broadcast").strip()
+        if mode == "private_only":
+            return await self.push_private(user_id, text)
+
         target = self.storage.get_notify_group(user_id)
         if not target:
             return NotifyResult(False, "none", "未绑定通知群")
