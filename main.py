@@ -616,15 +616,19 @@ class XyzwPlugin(Star):
     def _car_usage(self) -> str:
         return (
             "车辆命令\n\n"
-            "/xyzw 车\n"
-            "/xyzw 车 查看 [别名或ID前缀]\n"
-            "/xyzw 车 智能发车 [别名或ID前缀]\n"
-            "/xyzw 车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
-            "/xyzw 车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
-            "/xyzw 车 收车 [别名或ID前缀]\n\n"
+            "/xyzw 赛车\n"
+            "/xyzw 赛车 查看 [别名或ID前缀]\n"
+            "/xyzw 赛车 智能发车 [别名或ID前缀]\n"
+            "/xyzw 赛车 智能发车 白名单 查看 [别名或ID前缀]\n"
+            "/xyzw 赛车 智能发车 白名单 设置 <成员ID1,成员ID2,...> [别名或ID前缀]\n"
+            "/xyzw 赛车 智能发车 白名单 清空 [别名或ID前缀]\n"
+            "/xyzw 赛车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
+            "/xyzw 赛车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
+            "/xyzw 赛车 收车 [别名或ID前缀]\n\n"
+            "兼容旧前缀: `/xyzw 车 ...` 仍可继续使用。\n"
             "说明: 品阶 >= 5 的车辆发车时必须提供护卫ID，低品级车辆可直接发车。\n"
             "发车时间限制: 仅周一至周三 06:00-20:00 可发车。\n"
-            "智能发车说明: 手动智能发车会同步执行独立 sidecar 逻辑，并优先使用插件配置中的护卫白名单。"
+            "智能发车说明: 手动智能发车会同步执行独立 sidecar 逻辑，并优先使用当前账号配置的护卫白名单。"
         )
 
     def _daily_usage(self) -> str:
@@ -1387,15 +1391,39 @@ class XyzwPlugin(Star):
             return parts
         return None
 
-    def _default_smart_car_helper_whitelist(self) -> list[str]:
-        raw = str(self.config.get("smart_car_helper_whitelist", "") or "").strip()
-        if not raw:
+    def _smart_car_helper_whitelist(
+        self,
+        user_id: str,
+        account_id: str,
+    ) -> list[str]:
+        try:
+            return self.storage.get_smart_car_helper_whitelist(user_id, account_id)
+        except ValueError:
             return []
-        return [
-            item.strip()
-            for item in raw.replace("，", ",").split(",")
-            if item.strip().isdigit()
+
+    def _format_smart_car_helper_whitelist_text(
+        self,
+        account: dict[str, Any],
+        helper_whitelist: list[str],
+    ) -> str:
+        lines = [
+            "智能发车护卫白名单",
+            f"- 别名: {account.get('alias')}",
+            f"- 账号ID: {account.get('account_id', '')[:8]}",
         ]
+        if not helper_whitelist:
+            lines.append("- 白名单: 未配置")
+            lines.append("")
+            lines.append(
+                "可使用 /xyzw 赛车 智能发车 白名单 设置 <成员ID1,成员ID2,...> "
+                f"{account.get('alias')} 配置优先级。"
+            )
+            return "\n".join(lines)
+
+        lines.append(f"- 白名单: {','.join(helper_whitelist)}")
+        lines.append("")
+        lines.append("优先级按从左到右生效。")
+        return "\n".join(lines)
 
     def _format_car_overview_text(
         self,
@@ -1434,11 +1462,11 @@ class XyzwPlugin(Star):
                 lines.append(car_send_block_reason)
             else:
                 lines.append(
-                    "可使用 /xyzw 车 发车 <车辆ID> [护卫 <护卫ID>] "
+                    "可使用 /xyzw 赛车 发车 <车辆ID> [护卫 <护卫ID>] "
                     f"{account.get('alias')} 发车。"
                 )
                 lines.append(
-                    "可使用 /xyzw 车 护卫成员 "
+                    "可使用 /xyzw 赛车 护卫成员 "
                     f"{account.get('alias')} 查看当前俱乐部成员护卫次数。"
                 )
 
@@ -1490,7 +1518,7 @@ class XyzwPlugin(Star):
         if helper_id:
             lines.append(f"- 护卫ID: {helper_id}")
         lines.append("")
-        lines.append("已发车，可在约 4 小时后使用 /xyzw 车 收车 处理。")
+        lines.append("已发车，可在约 4 小时后使用 /xyzw 赛车 收车 处理。")
         return "\n".join(lines)
 
     def _format_car_helper_members_text(
@@ -1520,7 +1548,7 @@ class XyzwPlugin(Star):
             lines.append("")
             lines.append("当前没有匹配的护卫成员。")
             lines.append(
-                "可使用 /xyzw 车 护卫成员 [成员ID或名称关键字] [别名或ID前缀] 重新查询。"
+                "可使用 /xyzw 赛车 护卫成员 [成员ID或名称关键字] [别名或ID前缀] 重新查询。"
             )
             return "\n".join(lines)
 
@@ -1999,10 +2027,10 @@ class XyzwPlugin(Star):
             "/xyzw 绑定 [token|url|bin]\n"
             "/xyzw 账号\n"
             "/xyzw 状态 [别名或ID前缀]\n"
-            "/xyzw 车 [查看] [别名或ID前缀]\n"
-            "/xyzw 车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
-            "/xyzw 车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
-            "/xyzw 车 收车 [别名或ID前缀]\n"
+            "/xyzw 赛车 [查看] [别名或ID前缀]\n"
+            "/xyzw 赛车 护卫成员 [成员ID或名称关键字] [别名或ID前缀]\n"
+            "/xyzw 赛车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]\n"
+            "/xyzw 赛车 收车 [别名或ID前缀]\n"
             "/xyzw 日常 [别名或ID前缀]\n"
             "/xyzw 副本 ...\n"
             "/xyzw 资源 ...\n"
@@ -3270,7 +3298,10 @@ class XyzwPlugin(Star):
                 account,
                 lambda ready_account: self.sidecar.run_manual_smart_car_send(
                     ready_account.get("token", ""),
-                    helper_whitelist=self._default_smart_car_helper_whitelist(),
+                    helper_whitelist=self._smart_car_helper_whitelist(
+                        user_id,
+                        str(account.get("account_id") or ""),
+                    ),
                     max_cars=4,
                     timeout_ms=timeout_ms,
                 ),
@@ -3824,7 +3855,7 @@ class XyzwPlugin(Star):
                 )
             if len(claimable_cars) > 6:
                 lines.append(f"... 其余 {len(claimable_cars) - 6} 辆未展开")
-        lines.append(f"可使用 /xyzw 车 收车 {account.get('alias')} 立即处理。")
+        lines.append(f"可使用 /xyzw 赛车 收车 {account.get('alias')} 立即处理。")
         return "\n".join(lines)
 
     def _format_car_reminder_check_result(
@@ -3930,7 +3961,7 @@ class XyzwPlugin(Star):
                     f" - 剩余 {int(helper.get('availableCount') or 0)}"
                 )
         lines.append(
-            f"可使用 /xyzw 车 护卫成员 {self._format_helper_member_ids_text(reminder.get('member_ids'))} {account.get('alias')} 查看详情。"
+            f"可使用 /xyzw 赛车 护卫成员 {self._format_helper_member_ids_text(reminder.get('member_ids'))} {account.get('alias')} 查看详情。"
         )
         return "\n".join(lines)
 
@@ -5526,7 +5557,7 @@ class XyzwPlugin(Star):
                 yield result
             return
 
-        if subcommand in {"车", "车辆"}:
+        if subcommand in {"车", "车辆", "赛车"}:
             async for result in self._handle_car(event, tokens):
                 yield result
             return
@@ -6492,7 +6523,14 @@ class XyzwPlugin(Star):
                 selector = " ".join(tokens.tokens[3:]).strip()
             elif candidate in {"智能发车", "智能", "smart"}:
                 action = "智能发车"
-                selector = " ".join(tokens.tokens[3:]).strip()
+                remaining_tokens = [str(token or "").strip() for token in tokens.tokens[3:]]
+                if remaining_tokens:
+                    subcandidate = remaining_tokens[0].lower()
+                    if subcandidate in {"白名单", "helper", "helpers", "whitelist"}:
+                        action = "智能发车白名单"
+                        selector = " ".join(remaining_tokens[1:]).strip()
+                    else:
+                        selector = " ".join(remaining_tokens).strip()
             elif candidate in {"护卫成员", "护卫", "成员", "helpers", "helper"}:
                 action = "护卫成员"
                 helper_member_selector = " ".join(tokens.tokens[3:]).strip()
@@ -6509,7 +6547,7 @@ class XyzwPlugin(Star):
                         if len(remaining_tokens) < 2 or not remaining_tokens[1]:
                             yield event.plain_result(
                                 "发车参数不完整。\n"
-                                "用法: /xyzw 车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]"
+                                "用法: /xyzw 赛车 发车 <车辆ID> [护卫 <护卫ID>] [别名或ID前缀]"
                             )
                             return
                         helper_id = remaining_tokens[1]
@@ -6564,6 +6602,81 @@ class XyzwPlugin(Star):
             )
             return
 
+        if action == "智能发车白名单":
+            whitelist_tokens = tokens.tokens[4:] if tokens.len >= 5 else []
+            if not whitelist_tokens:
+                yield event.plain_result(self._car_usage())
+                return
+
+            operation = str(whitelist_tokens[0] or "").strip().lower()
+            remaining = [str(item or "").strip() for item in whitelist_tokens[1:]]
+
+            if operation in {"查看", "list"}:
+                selector = " ".join(remaining).strip()
+                account, error_text = self._resolve_account_or_text(user_id, selector)
+                if not account:
+                    yield event.plain_result(error_text or self._car_usage())
+                    return
+                whitelist = self._smart_car_helper_whitelist(
+                    user_id,
+                    str(account.get("account_id") or ""),
+                )
+                yield event.plain_result(
+                    self._format_smart_car_helper_whitelist_text(account, whitelist)
+                )
+                return
+
+            if operation in {"设置", "set"}:
+                if not remaining:
+                    yield event.plain_result(
+                        "请提供成员 ID 列表，使用英文逗号分隔。\n"
+                        "用法: /xyzw 赛车 智能发车 白名单 设置 <成员ID1,成员ID2,...> [别名或ID前缀]"
+                    )
+                    return
+                whitelist_text = remaining[0]
+                helper_ids = self._build_car_helper_member_ids(whitelist_text)
+                if not helper_ids:
+                    yield event.plain_result(
+                        "白名单格式无效，请使用英文逗号分隔的数字成员ID。"
+                    )
+                    return
+                selector = " ".join(remaining[1:]).strip()
+                account, error_text = self._resolve_account_or_text(user_id, selector)
+                if not account:
+                    yield event.plain_result(error_text or self._car_usage())
+                    return
+                whitelist = self.storage.update_smart_car_helper_whitelist(
+                    user_id,
+                    str(account.get("account_id") or ""),
+                    helper_ids,
+                )
+                yield event.plain_result(
+                    "智能发车护卫白名单已更新。\n"
+                    f"- 别名: {account.get('alias')}\n"
+                    f"- 白名单: {','.join(whitelist) if whitelist else '未配置'}"
+                )
+                return
+
+            if operation in {"清空", "clear", "reset"}:
+                selector = " ".join(remaining).strip()
+                account, error_text = self._resolve_account_or_text(user_id, selector)
+                if not account:
+                    yield event.plain_result(error_text or self._car_usage())
+                    return
+                self.storage.update_smart_car_helper_whitelist(
+                    user_id,
+                    str(account.get("account_id") or ""),
+                    [],
+                )
+                yield event.plain_result(
+                    "智能发车护卫白名单已清空。\n"
+                    f"- 别名: {account.get('alias')}"
+                )
+                return
+
+            yield event.plain_result(self._car_usage())
+            return
+
         if action == "智能发车":
             account, error_text = self._resolve_account_or_text(user_id, selector)
             if not account:
@@ -6575,7 +6688,10 @@ class XyzwPlugin(Star):
                 account,
                 lambda ready_account: self.sidecar.run_manual_smart_car_send(
                     ready_account.get("token", ""),
-                    helper_whitelist=self._default_smart_car_helper_whitelist(),
+                    helper_whitelist=self._smart_car_helper_whitelist(
+                        user_id,
+                        str(account.get("account_id") or ""),
+                    ),
                     max_cars=4,
                     timeout_ms=self.manual_smart_car_timeout_ms,
                 ),
@@ -6612,7 +6728,7 @@ class XyzwPlugin(Star):
             if helper_id and not helper_id.isdigit():
                 yield event.plain_result(
                     f"护卫ID 格式错误: {helper_id}\n"
-                    "请使用数字 ID，例如: /xyzw 车 发车 <车辆ID> 护卫 123456"
+                    "请使用数字 ID，例如: /xyzw 赛车 发车 <车辆ID> 护卫 123456"
                 )
                 return
 
@@ -6636,7 +6752,7 @@ class XyzwPlugin(Star):
             if not target_car:
                 yield event.plain_result(
                     f"发车失败: 未找到车辆 {car_id}\n"
-                    "请先使用 /xyzw 车 查看当前可发车车辆列表。"
+                    "请先使用 /xyzw 赛车 查看当前可发车车辆列表。"
                 )
                 return
 
@@ -6652,7 +6768,7 @@ class XyzwPlugin(Star):
                     "当前车辆品级较高，发车必须提供护卫ID。\n"
                     f"- 车辆ID: {car_id}\n"
                     f"- 品质: {target_car.get('gradeLabel') or '未知'}\n"
-                    "用法: /xyzw 车 发车 <车辆ID> 护卫 <护卫ID> [别名或ID前缀]"
+                    "用法: /xyzw 赛车 发车 <车辆ID> 护卫 <护卫ID> [别名或ID前缀]"
                 )
                 return
 
