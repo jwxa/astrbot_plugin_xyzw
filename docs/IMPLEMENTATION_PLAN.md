@@ -14,7 +14,7 @@
 ## 2. 核心原则
 
 - 用户关系模型固定为 `1 个 QQ 用户 -> 多个 XYZW token`
-- 通知策略支持 `群广播 / 仅私聊`
+- 通知策略支持 `群广播失败转私聊 / 群广播 / 仅私聊`
 - 群聊推送目标必须由用户显式绑定，不能依赖“最后发过言的群”
 - 高风险操作默认保留私聊限制
 - 插件层不直接实现 XYZW 协议，统一走 sidecar
@@ -47,8 +47,8 @@ astrbot_plugin_xyzw              web adapter / web ui
 | 场景 | 默认策略 | 说明 |
 |---|---|---|
 | 群内用户查询/执行 | 当前群回复 | 被动消息 |
-| 定时提醒 | `notify_mode=group_broadcast` 时发通知群；`private_only` 时发私聊 | 主动消息 |
-| 执行结果推送 | `notify_mode=group_broadcast` 时发通知群；`private_only` 时发私聊 | 主动消息 |
+| 定时提醒 | `group_broadcast_with_private_fallback` 时群失败转私聊；`group_broadcast` 时仅群；`private_only` 时仅私聊 | 主动消息 |
+| 执行结果推送 | `group_broadcast_with_private_fallback` 时群失败转私聊；`group_broadcast` 时仅群；`private_only` 时仅私聊 | 主动消息 |
 | 群推送失败 | 可选降级私聊 | 由配置控制 |
 | 敏感操作 | 建议仅私聊 | 绑定、删号、默认账号切换、功法类 |
 
@@ -61,7 +61,7 @@ astrbot_plugin_xyzw              web adapter / web ui
 | `qq_user_id` | string | QQ 用户主键 |
 | `accounts` | list | 绑定的 XYZW 账号列表 |
 | `default_account_id` | string | 默认账号 |
-| `notify.mode` | string | `group_broadcast` / `private_only` |
+| `notify.mode` | string | `group_broadcast_with_private_fallback` / `group_broadcast` / `private_only` |
 | `notify.group.group_id` | string | 默认通知群 |
 | `notify.group.unified_msg_origin` | string | 兼容通用主动消息场景 |
 | `created_at` | string | 创建时间 |

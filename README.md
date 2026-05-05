@@ -62,7 +62,8 @@ git submodule update --init --recursive
 
 - `request_timeout` 为统一的 sidecar 调用超时（秒）；收车提醒、挂机提醒、手动智能发车、定时日常都会在此基础上换算具体请求超时。
 - `notify_mode` 为通知策略：
-  - `group_broadcast`：优先发到已绑定通知群
+  - `group_broadcast_with_private_fallback`：优先发到已绑定通知群，失败后自动降级私聊
+  - `group_broadcast`：仅发到已绑定通知群
   - `private_only`：直接私聊当前用户，适合测试验证时避免打扰群组
 
 ### 2. sidecar

@@ -48,8 +48,12 @@ class XyzwPlugin(Star):
         self.logger = logger
         self.config = config or {}
         self.notify_mode = str(
-            self.config.get("notify_mode", "group_broadcast") or "group_broadcast"
-        ).strip() or "group_broadcast"
+            self.config.get(
+                "notify_mode",
+                "group_broadcast_with_private_fallback",
+            )
+            or "group_broadcast_with_private_fallback"
+        ).strip() or "group_broadcast_with_private_fallback"
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_xyzw")
         self.storage = XyzwStorage(self.data_dir)
         self.sidecar = XyzwSidecarClient(
@@ -61,9 +65,6 @@ class XyzwPlugin(Star):
         self._last_bot_self_id = ""
         self.notifier = NotificationRouter(
             storage=self.storage,
-            allow_private_fallback=bool(
-                self.config.get("allow_private_fallback", True)
-            ),
             forward_sender_uin_resolver=self._get_forward_sender_uin,
         )
         self.binding_private_only = bool(self.config.get("binding_private_only", True))
@@ -186,7 +187,15 @@ class XyzwPlugin(Star):
         state = self.storage.get_user_state(user_id)
         notify = state.get("notify", {}) or {}
         mode = str(notify.get("mode") or "").strip()
-        if mode in {"group_broadcast", "private_only"}:
+        if self.notify_mode == "private_only":
+            if mode != "private_only":
+                self.storage.set_notify_mode(user_id, "private_only")
+            return
+        if mode in {
+            "group_broadcast",
+            "group_broadcast_with_private_fallback",
+            "private_only",
+        }:
             return
         self.storage.set_notify_mode(user_id, self.notify_mode)
 
@@ -216,6 +225,27 @@ class XyzwPlugin(Star):
         session_text = str(session or "").strip()
         group_id = str(fallback_group_id or "").strip()
         user_id = str(fallback_user_id or "").strip()
+
+        if user_id:
+            self._ensure_notify_mode_initialized(user_id)
+            user_state = self.storage.get_user_state(user_id)
+            notify = user_state.get("notify", {}) or {}
+            mode = str(
+                notify.get("mode")
+                or self.notify_mode
+                or "group_broadcast_with_private_fallback"
+            ).strip()
+            if mode == "private_only":
+                try:
+                    await StarTools.send_message_by_id(
+                        type="PrivateMessage",
+                        id=user_id,
+                        message_chain=chain,
+                    )
+                    return True
+                except Exception as exc:
+                    self.logger.error("[XYZW] private_only 私聊回发失败: %s", exc)
+                    return False
 
         if session_text:
             try:
@@ -2043,7 +2073,7 @@ class XyzwPlugin(Star):
             "/xyzw 定时 赛车 ...\n"
             "/xyzw 通知 绑定本群\n"
             "/xyzw 通知 模式 查看\n"
-            "/xyzw 通知 模式 设置 <群广播|仅私聊>\n"
+            "/xyzw 通知 模式 设置 <群广播失败转私聊|群广播|仅私聊>\n"
             "/xyzw 通知 查看\n"
             "/xyzw 通知 解绑\n"
             "/xyzw 通知 测试\n\n"
@@ -2055,8 +2085,11 @@ class XyzwPlugin(Star):
         state = self.storage.get_user_state(user_id)
         notify = state.get("notify", {})
         group = notify.get("group")
-        mode = str(notify.get("mode", "group_broadcast") or "").strip()
+        mode = str(
+            notify.get("mode", "group_broadcast_with_private_fallback") or ""
+        ).strip()
         mode_text = {
+            "group_broadcast_with_private_fallback": "群广播失败转私聊",
             "group_broadcast": "群广播",
             "private_only": "仅私聊",
             "group_mention_first": "群广播",
@@ -2077,6 +2110,26 @@ class XyzwPlugin(Star):
         else:
             lines.append("- 通知群: 未绑定")
         return "\n".join(lines)
+
+    def _notify_requires_bound_group(self, user_id: str) -> bool:
+        state = self.storage.get_user_state(user_id)
+        notify = state.get("notify", {}) or {}
+        mode = str(
+            notify.get("mode") or self.notify_mode or "group_broadcast_with_private_fallback"
+        ).strip()
+        return mode == "group_broadcast"
+
+    def _notify_mode_label(self, user_id: str) -> str:
+        state = self.storage.get_user_state(user_id)
+        notify = state.get("notify", {}) or {}
+        mode = str(
+            notify.get("mode") or self.notify_mode or "group_broadcast_with_private_fallback"
+        ).strip()
+        return {
+            "group_broadcast_with_private_fallback": "群广播失败转私聊",
+            "group_broadcast": "群广播",
+            "private_only": "仅私聊",
+        }.get(mode, mode or "群广播失败转私聊")
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -4471,7 +4524,7 @@ class XyzwPlugin(Star):
         account_id = str(account.get("account_id") or "")
         now_iso = self._now_iso()
         notify_group = self.storage.get_notify_group(user_id)
-        if not notify_group:
+        if self._notify_requires_bound_group(user_id) and not notify_group:
             self.storage.update_car_reminder_runtime(
                 user_id,
                 account_id,
@@ -4626,7 +4679,7 @@ class XyzwPlugin(Star):
         account_id = str(account.get("account_id") or "")
         now_iso = self._now_iso()
         notify_group = self.storage.get_notify_group(user_id)
-        if not notify_group:
+        if self._notify_requires_bound_group(user_id) and not notify_group:
             self.storage.update_hangup_reminder_runtime(
                 user_id,
                 account_id,
@@ -4812,7 +4865,7 @@ class XyzwPlugin(Star):
             if str(item or "").strip()
         ]
         notify_group = self.storage.get_notify_group(user_id)
-        if not notify_group:
+        if self._notify_requires_bound_group(user_id) and not notify_group:
             self.storage.update_helper_member_reminder_runtime(
                 user_id,
                 account_id,
@@ -5063,7 +5116,7 @@ class XyzwPlugin(Star):
                 "message": "活动开放提醒配置无效。",
             }
 
-        if allow_notify and not self.storage.get_notify_group(user_id):
+        if allow_notify and self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
             self.storage.update_activity_reminder_runtime(
                 user_id,
                 activity_key,
@@ -5171,7 +5224,7 @@ class XyzwPlugin(Star):
                 "message": "当前账号的定时日常正在执行，请稍后再试。",
             }
 
-        if allow_notify and not self.storage.get_notify_group(user_id):
+        if allow_notify and self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
             self.storage.update_daily_task_runtime(
                 user_id,
                 account_id,
@@ -7031,7 +7084,7 @@ class XyzwPlugin(Star):
 
         if action in {"挂机", "hangup"}:
             if subaction in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         "请先绑定通知群，再开启挂机提醒。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7059,7 +7112,7 @@ class XyzwPlugin(Star):
                     "已开启挂机提醒。\n"
                     f"- 别名: {account.get('alias')}\n"
                     f"- 间隔: {interval_minutes} 分钟\n"
-                    "- 通知渠道: 群广播\n"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}\n"
                     f"- 说明: 后台会按 {self.scheduler_poll_interval_seconds} 秒轮询并在到期时检查。"
                 )
                 return
@@ -7126,7 +7179,7 @@ class XyzwPlugin(Star):
                 return
 
             if subaction in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         "请先绑定通知群，再开启护卫成员提醒。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7166,7 +7219,7 @@ class XyzwPlugin(Star):
                     f"- 间隔: {interval_minutes} 分钟\n"
                     f"- 成员ID: {','.join(member_ids)}\n"
                     f"- 时段: {self._car_send_window_text()}\n"
-                    "- 通知渠道: 群广播"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}"
                 )
                 return
 
@@ -7230,7 +7283,7 @@ class XyzwPlugin(Star):
                 return
 
             if subaction in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         "请先绑定通知群，再开启活动开放提醒。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7273,7 +7326,7 @@ class XyzwPlugin(Star):
                     "已开启活动开放提醒。\n"
                     f"- 活动: {self._activity_label(activity_key)}\n"
                     f"- 时间: {notify_time}\n"
-                    "- 通知渠道: 群广播\n"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}\n"
                     "- 说明: 到达提醒时间且活动当天开放时，后台会自动推送一次。"
                 )
                 return
@@ -7313,7 +7366,7 @@ class XyzwPlugin(Star):
 
         if action in {"日常", "daily"}:
             if subaction in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         "请先绑定通知群，再开启定时日常。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7350,7 +7403,7 @@ class XyzwPlugin(Star):
                     "已开启定时日常。\n"
                     f"- 别名: {account.get('alias')}\n"
                     f"- 时间: {schedule_time}\n"
-                    "- 通知渠道: 群广播\n"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}\n"
                     f"- 执行超时: {self._request_timeout_ms(minimum_ms=10000, extra_ms=75000)} ms"
                 )
                 return
@@ -7447,7 +7500,7 @@ class XyzwPlugin(Star):
                 return
 
             if subaction in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         f"请先绑定通知群，再开启定时{category_label}执行。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7494,7 +7547,7 @@ class XyzwPlugin(Star):
                     f"- 账号: {account.get('alias')}\n"
                     f"- 任务: {spec.get('label') or '-'}\n"
                     f"- 时间: {schedule_time}\n"
-                    "- 通知渠道: 群广播"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}"
                 )
                 return
 
@@ -7589,7 +7642,7 @@ class XyzwPlugin(Star):
                 return
 
             if subaction in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         "请先绑定通知群，再开启定时答题。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7625,7 +7678,7 @@ class XyzwPlugin(Star):
                     f"已开启定时{category_label}。\n"
                     f"- 账号: {account.get('alias')}\n"
                     f"- 规则: {self._format_schedule_rule_text(spec)}\n"
-                    "- 通知渠道: 群广播"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}"
                 )
                 return
 
@@ -7710,7 +7763,7 @@ class XyzwPlugin(Star):
             command_tokens = remaining_tokens[1:]
 
             if verb in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         f"请先绑定通知群，再开启定时{category_label}。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7750,7 +7803,7 @@ class XyzwPlugin(Star):
                     f"- 账号: {account.get('alias')}\n"
                     f"- 任务: {spec.get('label') or '-'}\n"
                     f"- 规则: {self._format_schedule_rule_text(spec)}\n"
-                    "- 通知渠道: 群广播"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}"
                 )
                 return
 
@@ -7847,7 +7900,7 @@ class XyzwPlugin(Star):
             command_tokens = remaining_tokens[1:]
 
             if verb in {"开启", "启用", "on"}:
-                if not self.storage.get_notify_group(user_id):
+                if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                     yield event.plain_result(
                         f"请先绑定通知群，再开启定时{category_label}。\n"
                         "使用 /xyzw 通知 绑定本群"
@@ -7887,7 +7940,7 @@ class XyzwPlugin(Star):
                     f"- 账号: {account.get('alias')}\n"
                     f"- 任务: {spec.get('label') or '-'}\n"
                     f"- 规则: {self._format_schedule_rule_text(spec)}\n"
-                    "- 通知渠道: 群广播"
+                    f"- 通知渠道: {self._notify_mode_label(user_id)}"
                 )
                 return
 
@@ -7948,7 +8001,7 @@ class XyzwPlugin(Star):
             return
 
         if subaction in {"开启", "启用", "on"}:
-            if not self.storage.get_notify_group(user_id):
+            if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
                 yield event.plain_result(
                     "请先绑定通知群，再开启收车提醒。\n"
                     "使用 /xyzw 通知 绑定本群"
@@ -7976,7 +8029,7 @@ class XyzwPlugin(Star):
                 "已开启收车提醒。\n"
                 f"- 别名: {account.get('alias')}\n"
                 f"- 间隔: {interval_minutes} 分钟\n"
-                "- 提醒渠道: 群广播\n"
+                f"- 提醒渠道: {self._notify_mode_label(user_id)}\n"
                 f"- 说明: 后台会按 {self.scheduler_poll_interval_seconds} 秒轮询并在到期时检查。"
             )
             return
@@ -8042,7 +8095,7 @@ class XyzwPlugin(Star):
                 "通知子命令:\n"
                 "/xyzw 通知 绑定本群\n"
                 "/xyzw 通知 模式 查看\n"
-                "/xyzw 通知 模式 设置 <群广播|仅私聊>\n"
+                "/xyzw 通知 模式 设置 <群广播失败转私聊|群广播|仅私聊>\n"
                 "/xyzw 通知 查看\n"
                 "/xyzw 通知 解绑\n"
                 "/xyzw 通知 测试"
@@ -8073,7 +8126,7 @@ class XyzwPlugin(Star):
                 yield event.plain_result(
                     "通知模式子命令:\n"
                     "/xyzw 通知 模式 查看\n"
-                    "/xyzw 通知 模式 设置 <群广播|仅私聊>"
+                    "/xyzw 通知 模式 设置 <群广播失败转私聊|群广播|仅私聊>"
                 )
                 return
 
@@ -8085,11 +8138,16 @@ class XyzwPlugin(Star):
             if mode_action in {"设置", "set"}:
                 if tokens.len < 5:
                     yield event.plain_result(
-                        "请提供通知策略：群广播 或 仅私聊。"
+                        "请提供通知策略：群广播失败转私聊、群广播 或 仅私聊。"
                     )
                     return
                 raw_mode = str(tokens.tokens[4] or "").strip().lower()
                 mapping = {
+                    "群广播失败转私聊": "group_broadcast_with_private_fallback",
+                    "群广播降级私聊": "group_broadcast_with_private_fallback",
+                    "降级私聊": "group_broadcast_with_private_fallback",
+                    "fallback": "group_broadcast_with_private_fallback",
+                    "group_broadcast_with_private_fallback": "group_broadcast_with_private_fallback",
                     "群广播": "group_broadcast",
                     "broadcast": "group_broadcast",
                     "group_broadcast": "group_broadcast",
@@ -8100,7 +8158,9 @@ class XyzwPlugin(Star):
                 }
                 mode = mapping.get(raw_mode)
                 if not mode:
-                    yield event.plain_result("不支持的通知策略，请使用：群广播 或 仅私聊。")
+                    yield event.plain_result(
+                        "不支持的通知策略，请使用：群广播失败转私聊、群广播 或 仅私聊。"
+                    )
                     return
                 self.storage.set_notify_mode(user_id, mode)
                 yield event.plain_result(self._format_notify_state(user_id))

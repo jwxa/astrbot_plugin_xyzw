@@ -14,18 +14,14 @@
   },
   "notify_mode": {
     "description": "通知策略",
-    "hint": "群广播会优先发送到已绑定通知群；仅私聊模式下，通知与测试消息都会直接发给当前用户。",
+    "hint": "支持仅私聊、仅群广播、群广播失败后降级私聊三种模式。",
     "type": "string",
     "options": [
+      "group_broadcast_with_private_fallback",
       "group_broadcast",
       "private_only"
     ],
-    "default": "group_broadcast"
-  },
-  "allow_private_fallback": {
-    "description": "群广播失败时是否降级为私聊",
-    "type": "bool",
-    "default": true
+    "default": "group_broadcast_with_private_fallback"
   },
   "binding_private_only": {
     "description": "账号绑定等敏感操作是否仅允许私聊",

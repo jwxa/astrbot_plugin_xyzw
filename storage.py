@@ -375,7 +375,7 @@ class XyzwStorage:
                 "accounts": [],
                 "default_account_id": "",
                 "notify": {
-                    "mode": "group_broadcast",
+                    "mode": "group_broadcast_with_private_fallback",
                     "group": None,
                 },
                 "schedules": {
@@ -395,7 +395,7 @@ class XyzwStorage:
         notify = user.setdefault("notify", {})
         mode = str(notify.get("mode") or "").strip()
         if not mode or mode == "group_mention_first":
-            notify["mode"] = "group_broadcast"
+            notify["mode"] = "group_broadcast_with_private_fallback"
         notify.setdefault("group", None)
         schedules = user.setdefault("schedules", {})
         schedules.setdefault("car_reminders", [])
@@ -429,7 +429,6 @@ class XyzwStorage:
     ) -> dict[str, Any]:
         user = self.ensure_user(user_id)
         notify = user.setdefault("notify", {})
-        notify["mode"] = "group_broadcast"
         notify["group"] = {
             "group_id": group_id,
             "unified_msg_origin": str(unified_msg_origin or "").strip(),

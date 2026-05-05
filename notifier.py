@@ -33,11 +33,9 @@ class NotificationRouter:
     def __init__(
         self,
         storage: XyzwStorage,
-        allow_private_fallback: bool = True,
         forward_sender_uin_resolver: Callable[[], str | None] | None = None,
     ):
         self.storage = storage
-        self.allow_private_fallback = allow_private_fallback
         self.forward_sender_uin_resolver = forward_sender_uin_resolver
         self.forward_threshold = 280
         self.forward_line_threshold = 8
@@ -47,6 +45,21 @@ class NotificationRouter:
         self.forward_sender_name = "XYZW 插件"
 
     def preview_target(self, user_id: str) -> str:
+        user_state = self.storage.get_user_state(user_id)
+        notify = user_state.get("notify", {}) or {}
+        mode = str(
+            notify.get("mode") or "group_broadcast_with_private_fallback"
+        ).strip()
+        if mode == "private_only":
+            return "仅私聊"
+        if mode == "group_broadcast_with_private_fallback":
+            target = self.storage.get_notify_group(user_id)
+            if not target:
+                return "群广播失败转私聊（未绑定通知群）"
+            session = str(target.get("unified_msg_origin") or "").strip()
+            if session:
+                return f"群广播失败转私聊，session={session}"
+            return f"群广播失败转私聊，group_id={target['group_id']}"
         target = self.storage.get_notify_group(user_id)
         if not target:
             return "未绑定通知群"
@@ -128,12 +141,17 @@ class NotificationRouter:
     async def push_group_message(self, user_id: str, text: str) -> NotifyResult:
         user_state = self.storage.get_user_state(user_id)
         notify = user_state.get("notify", {}) or {}
-        mode = str(notify.get("mode") or "group_broadcast").strip()
+        mode = str(
+            notify.get("mode") or "group_broadcast_with_private_fallback"
+        ).strip()
         if mode == "private_only":
             return await self.push_private(user_id, text)
+        allow_private_fallback = mode == "group_broadcast_with_private_fallback"
 
         target = self.storage.get_notify_group(user_id)
         if not target:
+            if allow_private_fallback:
+                return await self.push_private(user_id, text)
             return NotifyResult(False, "none", "未绑定通知群")
 
         chain = self.build_message_chain(text)
@@ -151,7 +169,7 @@ class NotificationRouter:
                 return NotifyResult(True, "group_session", f"session={session}")
             except Exception as exc:
                 logger.error("按群会话发送通知失败: %s", exc)
-                if not group_id and not self.allow_private_fallback:
+                if not group_id and not allow_private_fallback:
                     return NotifyResult(False, "group_session", str(exc))
 
         if group_id:
@@ -164,7 +182,7 @@ class NotificationRouter:
                 return NotifyResult(True, "group_id", f"group_id={group_id}")
             except Exception as exc:
                 logger.error("按群号发送通知失败: %s", exc)
-                if not self.allow_private_fallback:
+                if not allow_private_fallback:
                     return NotifyResult(False, "group_id", str(exc))
                 return await self.push_private(user_id, f"[群通知失败降级]\n{text}")
 
