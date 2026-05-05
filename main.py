@@ -1604,14 +1604,24 @@ class XyzwPlugin(Star):
         helpers = result.get("helpers", []) or []
         helper_summary = result.get("helperSummary", {}) or {}
         current_role = result.get("currentRole", {}) or {}
+        before_summary = ((result.get("before") or {}).get("summary") or {})
+        after_summary = ((result.get("after") or {}).get("summary") or {})
+        sent_count = sum(
+            1
+            for item in details
+            if str(item.get("status") or "").startswith("本次发车")
+        )
         lines = [
             "智能发车结果",
             f"- 别名: {account.get('alias')}",
             f"- 账号ID: {account.get('account_id', '')[:8]}",
             f"- 当前角色ID: {current_role.get('roleId') or '-'}",
-            f"- 处理车辆: {int(result.get('processedCount') or 0)}",
-            f"- 发车前空闲: {int(result.get('idleCountBefore') or 0)}",
-            f"- 发车后空闲: {int(result.get('idleCountAfter') or 0)}",
+            f"- 本次处理待发: {int(result.get('processedCount') or 0)}",
+            f"- 本次新增发车: {sent_count}",
+            f"- 发车前待发: {int(result.get('idleCountBefore') or 0)}",
+            f"- 发车后待发: {int(result.get('idleCountAfter') or 0)}",
+            f"- 发车前在途: {int(before_summary.get('runningCars') or 0)}",
+            f"- 发车后在途: {int(after_summary.get('runningCars') or 0)}",
             f"- 刷新券: {int(result.get('refreshTicketsBefore') or 0)} -> {int(result.get('refreshTicketsAfter') or 0)}",
             f"- 超级跑车: {self._format_super_car_status_text(result)}",
             f"- 护卫成员总数: {helper_summary.get('totalMembers', len(helpers))}",
@@ -2704,11 +2714,12 @@ class XyzwPlugin(Star):
         result: dict[str, Any],
     ) -> str:
         details = result.get("details", []) or []
+        before_summary = ((result.get("before") or {}).get("summary") or {})
+        after_summary = ((result.get("after") or {}).get("summary") or {})
         sent_count = sum(
             1
             for item in details
             if str(item.get("status") or "").startswith("本次发车")
-            or str(item.get("status") or "") == "已经发车"
         )
         refresh_count = sum(
             1
@@ -2718,12 +2729,14 @@ class XyzwPlugin(Star):
         lines = [
             "智能发车结果",
             f"- 别名: {account.get('alias')}",
-            f"- 处理车辆: {int(result.get('processedCount') or 0)}",
-            f"- 发车成功: {sent_count}",
+            f"- 本次处理待发: {int(result.get('processedCount') or 0)}",
+            f"- 本次新增发车: {sent_count}",
             f"- 刷新次数: {refresh_count}",
             f"- 失败: {len(result.get('failures') or [])}",
-            f"- 发车前未发: {int(result.get('idleCountBefore') or 0)}",
-            f"- 发车后未发: {int(result.get('idleCountAfter') or 0)}",
+            f"- 发车前待发: {int(result.get('idleCountBefore') or 0)}",
+            f"- 发车后待发: {int(result.get('idleCountAfter') or 0)}",
+            f"- 发车前在途: {int(before_summary.get('runningCars') or 0)}",
+            f"- 发车后在途: {int(after_summary.get('runningCars') or 0)}",
         ]
         message = str(result.get("message") or "").strip()
         if message:

@@ -211,12 +211,20 @@ function shouldSendCar(carInfo, refreshTickets, options = {}) {
   const superCarUnlocked = Boolean(options?.superCarUnlocked);
 
   if (superCarUnlocked) {
-    return color >= 5 || racingTicketsCount >= 4 || isBigPrize(rewards);
+    return color >= 5 || isBigPrize(rewards);
   }
   if (Number(refreshTickets || 0) >= 6) {
     return color >= 5 || racingTicketsCount >= 4 || isBigPrize(rewards);
   }
   return color >= 4 || racingTicketsCount >= 2 || isBigPrize(rewards);
+}
+
+function logSmartSendStage(stage, payload = {}) {
+  try {
+    console.log(`[smart-send] ${stage} ${JSON.stringify(payload)}`);
+  } catch (_error) {
+    console.log(`[smart-send] ${stage}`);
+  }
 }
 
 async function fetchCarState(client, timeoutMs) {
@@ -851,6 +859,14 @@ export async function runManualSmartCarSendTask(
   const details = [];
   const failures = [];
 
+  logSmartSendStage("start", {
+    processedCount: idleCars.length,
+    idleCountBefore: before.summary?.idleCars || 0,
+    refreshTicketsBefore,
+    superCarUnlockedBefore,
+    helperWhitelist: Array.isArray(helper_whitelist) ? helper_whitelist : [],
+  });
+
   for (const initialCar of idleCars) {
     let refreshAttempts = 0;
     let superCarRefreshAttempts = 0;
@@ -865,6 +881,11 @@ export async function runManualSmartCarSendTask(
         (item) => String(item.id || "") === String(initialCar.id || ""),
       );
       if (!currentCar || currentCar.status !== "idle") {
+        logSmartSendStage("skip-non-idle", {
+          carId: String(initialCar.id || ""),
+          found: Boolean(currentCar),
+          status: currentCar?.status || "",
+        });
         currentStatus = "已经发车";
         break;
       }
@@ -879,17 +900,42 @@ export async function runManualSmartCarSendTask(
       });
       lastHelperId = helperDecision.helperId;
       lastHelperNote = helperDecision.helperNote;
+      const rewardRefreshTickets = countRacingRefreshTickets(currentCar.rewards);
+      const rewardHasBigPrize = isBigPrize(currentCar.rewards);
 
-      if (
-        shouldSendCar(currentCar, state.refreshTickets, {
-          superCarUnlocked: state.superCarUnlocked,
-        })
-      ) {
+      const directSend = shouldSendCar(currentCar, state.refreshTickets, {
+        superCarUnlocked: state.superCarUnlocked,
+      });
+
+      logSmartSendStage("car-evaluate", {
+        carId: String(currentCar.id || ""),
+        slot: Number(currentCar.slot || 0),
+        color: Number(currentCar.color || 0),
+        refreshCount: Number(currentCar.refreshCount || 0),
+        refreshAttempts,
+        superCarRefreshAttempts,
+        refreshTickets: Number(state.refreshTickets || 0),
+        superCarUnlocked: Boolean(state.superCarUnlocked),
+        rewardRefreshTickets,
+        rewardHasBigPrize,
+        helperId: lastHelperId || 0,
+        helperNote: lastHelperNote,
+        directSend,
+      });
+
+      if (directSend) {
         const sendResult = await performSendWithRetry({
           client,
           carId: currentCar.id,
           helperId: lastHelperId,
           timeoutMs,
+        });
+        logSmartSendStage("car-send-direct", {
+          carId: String(currentCar.id || ""),
+          helperId: lastHelperId || 0,
+          ok: Boolean(sendResult.ok),
+          attempts: Number(sendResult.attempts || 0),
+          error: sendResult.error || "",
         });
         if (sendResult.ok) {
           await sleep(500);
@@ -897,6 +943,13 @@ export async function runManualSmartCarSendTask(
           const sentCar = (state.overview.cars || []).find(
             (item) => String(item.id || "") === String(currentCar.id || ""),
           );
+          logSmartSendStage("car-send-direct-after-refresh", {
+            carId: String(currentCar.id || ""),
+            status: sentCar?.status || "",
+            sendAt: sentCar?.sendAt || 0,
+            sentAtMs: sentCar?.sentAtMs || 0,
+            helperId: sentCar?.helperId || 0,
+          });
           currentStatus = sendResult.attempts > 1 ? "本次发车(重试成功)" : "本次发车";
           remark = lastHelperNote;
           details.push({
@@ -945,6 +998,15 @@ export async function runManualSmartCarSendTask(
         !canUseTicketRefresh &&
         superCarRefreshAttempts < MAX_NEW_SMART_SEND_REFRESH_ATTEMPTS;
 
+      logSmartSendStage("car-refresh-decision", {
+        carId: String(currentCar.id || ""),
+        refreshAttempts,
+        superCarRefreshAttempts,
+        freeRefresh,
+        canUseTicketRefresh,
+        canUseSuperCarRefresh,
+      });
+
       if (
         refreshAttempts >= MAX_NEW_SMART_SEND_REFRESH_ATTEMPTS ||
         (!freeRefresh && !canUseTicketRefresh && !canUseSuperCarRefresh)
@@ -955,12 +1017,28 @@ export async function runManualSmartCarSendTask(
           helperId: lastHelperId,
           timeoutMs,
         });
+        logSmartSendStage("car-send-fallback", {
+          carId: String(currentCar.id || ""),
+          helperId: lastHelperId || 0,
+          refreshAttempts,
+          superCarRefreshAttempts,
+          ok: Boolean(sendResult.ok),
+          attempts: Number(sendResult.attempts || 0),
+          error: sendResult.error || "",
+        });
         if (sendResult.ok) {
           await sleep(500);
           state = await refreshSmartCarContext(client, timeoutMs);
           const sentCar = (state.overview.cars || []).find(
             (item) => String(item.id || "") === String(currentCar.id || ""),
           );
+          logSmartSendStage("car-send-fallback-after-refresh", {
+            carId: String(currentCar.id || ""),
+            status: sentCar?.status || "",
+            sendAt: sentCar?.sendAt || 0,
+            sentAtMs: sentCar?.sentAtMs || 0,
+            helperId: sentCar?.helperId || 0,
+          });
           currentStatus = sendResult.attempts > 1 ? "本次发车(重试成功)" : "本次发车";
           remark =
             refreshAttempts >= MAX_NEW_SMART_SEND_REFRESH_ATTEMPTS
@@ -1009,6 +1087,14 @@ export async function runManualSmartCarSendTask(
         carId: currentCar.id,
         timeoutMs,
       });
+      logSmartSendStage("car-refresh", {
+        carId: String(currentCar.id || ""),
+        refreshAttempts,
+        superCarRefreshAttempts,
+        ok: Boolean(refreshResult.ok),
+        attempts: Number(refreshResult.attempts || 0),
+        error: refreshResult.error || "",
+      });
       if (!refreshResult.ok) {
         failures.push({
           carId: String(currentCar.id || ""),
@@ -1040,6 +1126,13 @@ export async function runManualSmartCarSendTask(
       state = await refreshSmartCarContext(client, timeoutMs);
     }
   }
+
+  logSmartSendStage("finish", {
+    processedCount: idleCars.length,
+    idleCountAfter: state.overview.summary?.idleCars || 0,
+    refreshTicketsAfter: state.refreshTickets,
+    failures: failures.length,
+  });
 
   return {
     processedCount: idleCars.length,
