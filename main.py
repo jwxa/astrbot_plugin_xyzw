@@ -73,12 +73,6 @@ class XyzwPlugin(Star):
             default=60,
             min_value=30,
         )
-        self.car_reminder_default_interval_minutes = self._read_int_config(
-            "car_reminder_default_interval_minutes",
-            default=15,
-            min_value=5,
-            max_value=720,
-        )
         self.hangup_reminder_default_interval_minutes = self._read_int_config(
             "hangup_reminder_default_interval_minutes",
             default=15,
@@ -2089,7 +2083,7 @@ class XyzwPlugin(Star):
             "/xyzw 通知 查看\n"
             "/xyzw 通知 解绑\n"
             "/xyzw 通知 测试\n\n"
-            "当前已实现: sidecar 健康检查、会话式 token 绑定、URL 绑定、BIN 导入绑定、多账号管理、默认账号切换、状态查询、赛车概览/护卫成员查询/发车/收车/智能发车、智能发车护卫白名单、简版日常、基础副本命令、基础资源命令、通知群绑定、通知策略、收车提醒、挂机提醒、护卫成员提醒、定时日常、定时资源/副本执行、活动开放提醒、每周答题、月末月度任务提醒、月末钓鱼进度补齐、赛车禁发提醒、赛车定时智能发车、赛车夜间收车提醒、赛车定时收车。\n"
+            "当前已实现: sidecar 健康检查、会话式 token 绑定、URL 绑定、BIN 导入绑定、多账号管理、默认账号切换、状态查询、赛车概览/护卫成员查询/发车/收车/智能发车、智能发车护卫白名单、简版日常、基础副本命令、基础资源命令、通知群绑定、通知策略、挂机提醒、护卫成员提醒、定时日常、定时资源/副本执行、活动开放提醒、每周答题、月末月度任务提醒、月末钓鱼进度补齐、赛车禁发提醒、赛车定时智能发车、赛车夜间收车提醒、赛车定时收车。\n"
             "当前未实现: 批量任务、复杂副本编排。"
         )
 
@@ -2180,14 +2174,6 @@ class XyzwPlugin(Star):
         if hour < 0 or hour > 23 or minute < 0 or minute > 59:
             return None
         return hour, minute
-
-    def _car_reminder_status_text(self, status: str | None) -> str:
-        return {
-            "idle": "无可收取车辆",
-            "ready": "已有可收取车辆",
-            "blocked": "通知群未绑定",
-            "error": "检查失败",
-        }.get(str(status or "").strip().lower(), "未检查")
 
     def _hangup_reminder_status_text(self, status: str | None) -> str:
         return {
@@ -3492,9 +3478,6 @@ class XyzwPlugin(Star):
         return (
             "定时命令\n\n"
             "/xyzw 定时 查看\n"
-            "/xyzw 定时 收车 开启 [间隔分钟] [别名或ID前缀]\n"
-            "/xyzw 定时 收车 关闭 [别名或ID前缀]\n"
-            "/xyzw 定时 收车 检查 [别名或ID前缀]\n\n"
             "/xyzw 定时 挂机 开启 [间隔分钟] [别名或ID前缀]\n"
             "/xyzw 定时 挂机 关闭 [别名或ID前缀]\n"
             "/xyzw 定时 挂机 检查 [别名或ID前缀]\n\n"
@@ -3540,7 +3523,6 @@ class XyzwPlugin(Star):
             "/xyzw 定时 活动 查看\n"
             "/xyzw 定时 活动 开启 <梦境|宝库> [HH:MM]\n"
             "/xyzw 定时 活动 关闭 <梦境|宝库>\n\n"
-            f"默认收车提醒间隔: {self.car_reminder_default_interval_minutes} 分钟\n"
             f"默认挂机提醒间隔: {self.hangup_reminder_default_interval_minutes} 分钟\n"
             f"默认护卫成员提醒间隔: {self.helper_member_reminder_default_interval_minutes} 分钟\n"
             "默认活动提醒时间: 00:00\n"
@@ -3761,7 +3743,6 @@ class XyzwPlugin(Star):
             f"- 巡检轮询: {self.scheduler_poll_interval_seconds} 秒",
         ]
 
-        reminders = self.storage.list_car_reminders(user_id)
         hangup_reminders = self.storage.list_hangup_reminders(user_id)
         helper_member_reminders = self.storage.list_helper_member_reminders(user_id)
         daily_tasks = self.storage.list_daily_tasks(user_id)
@@ -3772,8 +3753,7 @@ class XyzwPlugin(Star):
         monthly_tasks = self.storage.list_action_tasks(user_id, category="monthly")
         car_tasks = self.storage.list_action_tasks(user_id, category="car")
         if (
-            not reminders
-            and not hangup_reminders
+            not hangup_reminders
             and not helper_member_reminders
             and not daily_tasks
             and not activity_reminders
@@ -3788,32 +3768,6 @@ class XyzwPlugin(Star):
             lines.append("")
             lines.append(self._schedule_usage())
             return "\n".join(lines)
-
-        if reminders:
-            lines.append("")
-            lines.append("收车提醒:")
-            for index, reminder in enumerate(reminders, start=1):
-                account = self.storage.get_account_by_id(
-                    user_id,
-                    str(reminder.get("account_id") or ""),
-                )
-                alias = account.get("alias") if account else "已删除账号"
-                enabled_text = "启用" if reminder.get("enabled") else "关闭"
-                lines.append(f"{index}. {alias} [{enabled_text}]")
-                lines.append(
-                    f"   间隔: {int(reminder.get('interval_minutes') or self.car_reminder_default_interval_minutes)} 分钟"
-                )
-                lines.append(
-                    f"   状态: {self._car_reminder_status_text(reminder.get('last_status'))}"
-                )
-                lines.append(
-                    f"   最近检查: {self._format_datetime_text(reminder.get('last_checked_at'))}"
-                )
-                lines.append(
-                    f"   最近通知: {self._format_datetime_text(reminder.get('last_notified_at'))}"
-                )
-                if reminder.get("last_error_message"):
-                    lines.append(f"   最近错误: {reminder.get('last_error_message')}")
 
         if hangup_reminders:
             lines.append("")
@@ -3935,75 +3889,6 @@ class XyzwPlugin(Star):
             lines.append("")
             self._append_activity_schedule_lines(lines, activity_reminders)
 
-        return "\n".join(lines)
-
-    def _build_car_ready_signature(self, overview: dict[str, Any]) -> str:
-        claimable_ids = sorted(
-            str(car.get("id") or "")
-            for car in (overview.get("cars") or [])
-            if car.get("claimable")
-        )
-        return ",".join(item for item in claimable_ids if item)
-
-    def _build_car_reminder_message(
-        self,
-        account: dict[str, Any],
-        overview: dict[str, Any],
-    ) -> str:
-        claimable_cars = [
-            car for car in (overview.get("cars") or []) if car.get("claimable")
-        ]
-        lines = [
-            "XYZW 收车提醒",
-            f"账号: {account.get('alias')}",
-            f"可收取: {len(claimable_cars)}",
-        ]
-        if claimable_cars:
-            lines.append("车辆:")
-            for index, car in enumerate(claimable_cars[:6], start=1):
-                lines.append(
-                    f"{index}. {car.get('gradeLabel', '未知')} id={car.get('id')}"
-                )
-            if len(claimable_cars) > 6:
-                lines.append(f"... 其余 {len(claimable_cars) - 6} 辆未展开")
-        lines.append(f"可使用 /xyzw 赛车 收车 {account.get('alias')} 立即处理。")
-        return "\n".join(lines)
-
-    def _format_car_reminder_check_result(
-        self,
-        account: dict[str, Any],
-        result: dict[str, Any],
-    ) -> str:
-        lines = [
-            "收车提醒检查",
-            f"- 别名: {account.get('alias')}",
-            f"- 状态: {result.get('status_text') or '-'}",
-            f"- 可收取: {result.get('ready_count', 0)}",
-        ]
-        if result.get("notified"):
-            lines.append("- 通知: 已发送")
-        elif result.get("success") and result.get("ready_count", 0) > 0:
-            lines.append("- 通知: 本轮未重复发送")
-
-        error_message = result.get("error_message")
-        if error_message:
-            lines.append(f"- 错误: {error_message}")
-
-        claimable_cars = result.get("claimable_cars", []) or []
-        if claimable_cars:
-            lines.append("")
-            lines.append("可收取车辆:")
-            for index, car in enumerate(claimable_cars[:6], start=1):
-                lines.append(
-                    f"{index}. {car.get('gradeLabel', '未知')} id={car.get('id')}"
-                )
-            if len(claimable_cars) > 6:
-                lines.append(f"... 其余 {len(claimable_cars) - 6} 辆未展开")
-
-        message = result.get("message")
-        if message:
-            lines.append("")
-            lines.append(message)
         return "\n".join(lines)
 
     def _build_helper_member_reminder_signature(
@@ -4340,23 +4225,6 @@ class XyzwPlugin(Star):
             lines.append("可使用 /xyzw 副本 宝库 前3 或 /xyzw 副本 宝库 后2 执行。")
         return "\n".join(lines)
 
-    def _is_car_reminder_due(self, reminder: dict[str, Any]) -> bool:
-        last_checked_at = self._parse_iso_datetime(reminder.get("last_checked_at"))
-        if not last_checked_at:
-            return True
-        try:
-            interval_minutes = int(
-                reminder.get("interval_minutes")
-                or self.car_reminder_default_interval_minutes
-            )
-        except (TypeError, ValueError):
-            interval_minutes = self.car_reminder_default_interval_minutes
-        interval_minutes = max(5, min(interval_minutes, 720))
-        elapsed_seconds = (
-            datetime.now(timezone.utc) - last_checked_at.astimezone(timezone.utc)
-        ).total_seconds()
-        return elapsed_seconds >= interval_minutes * 60
-
     def _is_hangup_reminder_due(self, reminder: dict[str, Any]) -> bool:
         last_checked_at = self._parse_iso_datetime(reminder.get("last_checked_at"))
         if not last_checked_at:
@@ -4472,7 +4340,6 @@ class XyzwPlugin(Star):
         await asyncio.sleep(3)
         while not self._scheduler_stop_event.is_set():
             try:
-                await self._run_car_reminder_jobs()
                 await self._run_hangup_reminder_jobs()
                 await self._run_helper_member_reminder_jobs()
                 await self._run_activity_reminder_jobs()
@@ -4490,18 +4357,6 @@ class XyzwPlugin(Star):
                 )
             except asyncio.TimeoutError:
                 continue
-
-    async def _run_car_reminder_jobs(self) -> None:
-        for item in self.storage.iter_enabled_car_reminders():
-            reminder = item.get("job", {}) or {}
-            if not self._is_car_reminder_due(reminder):
-                continue
-            await self._check_car_reminder_once(
-                user_id=str(item.get("user_id") or ""),
-                account=item.get("account", {}) or {},
-                reminder=reminder,
-                allow_notify=True,
-            )
 
     async def _run_hangup_reminder_jobs(self) -> None:
         for item in self.storage.iter_enabled_hangup_reminders():
@@ -4563,161 +4418,6 @@ class XyzwPlugin(Star):
                 allow_notify=True,
                 force_run=False,
             )
-
-    async def _check_car_reminder_once(
-        self,
-        user_id: str,
-        account: dict[str, Any],
-        reminder: dict[str, Any],
-        allow_notify: bool = True,
-    ) -> dict[str, Any]:
-        account_id = str(account.get("account_id") or "")
-        now_iso = self._now_iso()
-        notify_group = self.storage.get_notify_group(user_id)
-        if self._notify_requires_bound_group(user_id) and not notify_group:
-            self.storage.update_car_reminder_runtime(
-                user_id,
-                account_id,
-                last_checked_at=now_iso,
-                last_status="blocked",
-                last_error_message="未绑定通知群",
-                last_error_at=now_iso,
-            )
-            return {
-                "success": False,
-                "notified": False,
-                "ready_count": 0,
-                "status_text": self._car_reminder_status_text("blocked"),
-                "error_message": "未绑定通知群",
-                "message": "请先使用 /xyzw 通知 绑定本群。",
-                "claimable_cars": [],
-            }
-
-        response = await self._call_with_account_token_ready(
-            user_id,
-            account,
-            lambda ready_account: self.sidecar.get_car_overview(
-                ready_account.get("token", ""),
-                timeout_ms=self._request_timeout_ms(minimum_ms=5000),
-            ),
-            reason="car_reminder",
-        )
-        if not response.get("ok"):
-            error_message = response.get("message", "未知错误")
-            self.storage.update_car_reminder_runtime(
-                user_id,
-                account_id,
-                last_checked_at=now_iso,
-                last_status="error",
-                last_error_message=error_message,
-                last_error_at=now_iso,
-            )
-            return {
-                "success": False,
-                "notified": False,
-                "ready_count": 0,
-                "status_text": self._car_reminder_status_text("error"),
-                "error_message": error_message,
-                "message": f"车辆查询失败: {error_message}",
-                "claimable_cars": [],
-            }
-
-        overview = (response.get("data", {}) or {}).get("overview", {}) or {}
-        claimable_cars = [
-            car for car in (overview.get("cars") or []) if car.get("claimable")
-        ]
-        ready_count = len(claimable_cars)
-        signature = self._build_car_ready_signature(overview)
-        last_signature = str(reminder.get("last_ready_signature") or "")
-        last_status = str(reminder.get("last_status") or "")
-        runtime_fields: dict[str, Any] = {
-            "last_checked_at": now_iso,
-            "last_ready_count": ready_count,
-            "last_error_message": "",
-            "last_error_at": "",
-        }
-
-        if ready_count <= 0:
-            runtime_fields.update(
-                last_status="idle",
-                last_ready_signature="",
-            )
-            self.storage.update_car_reminder_runtime(
-                user_id,
-                account_id,
-                **runtime_fields,
-            )
-            return {
-                "success": True,
-                "notified": False,
-                "ready_count": 0,
-                "status_text": self._car_reminder_status_text("idle"),
-                "message": "当前没有可收取车辆。",
-                "claimable_cars": [],
-            }
-
-        should_notify = allow_notify and (
-            signature != last_signature or last_status != "ready"
-        )
-        if not should_notify:
-            runtime_fields["last_status"] = "ready"
-            self.storage.update_car_reminder_runtime(
-                user_id,
-                account_id,
-                **runtime_fields,
-            )
-            return {
-                "success": True,
-                "notified": False,
-                "ready_count": ready_count,
-                "status_text": self._car_reminder_status_text("ready"),
-                "message": "当前已有可收取车辆，且本轮不重复发送提醒。",
-                "claimable_cars": claimable_cars,
-            }
-
-        notify_result = await self.notifier.push_group_message(
-            user_id=user_id,
-            text=self._build_car_reminder_message(account, overview),
-        )
-        if notify_result.success:
-            runtime_fields.update(
-                last_status="ready",
-                last_ready_signature=signature,
-                last_notified_at=now_iso,
-            )
-            self.storage.update_car_reminder_runtime(
-                user_id,
-                account_id,
-                **runtime_fields,
-            )
-            return {
-                "success": True,
-                "notified": True,
-                "ready_count": ready_count,
-                "status_text": self._car_reminder_status_text("ready"),
-                "message": f"收车提醒已发送，channel={notify_result.channel}",
-                "claimable_cars": claimable_cars,
-            }
-
-        runtime_fields.update(
-            last_status="error",
-            last_error_message=notify_result.detail or "通知发送失败",
-            last_error_at=now_iso,
-        )
-        self.storage.update_car_reminder_runtime(
-            user_id,
-            account_id,
-            **runtime_fields,
-        )
-        return {
-            "success": False,
-            "notified": False,
-            "ready_count": ready_count,
-            "status_text": self._car_reminder_status_text("error"),
-            "error_message": notify_result.detail or "通知发送失败",
-            "message": "收车提醒发送失败。",
-            "claimable_cars": claimable_cars,
-        }
 
     async def _check_hangup_reminder_once(
         self,
@@ -7105,8 +6805,6 @@ class XyzwPlugin(Star):
             return
 
         if action not in {
-            "收车",
-            "car",
             "挂机",
             "hangup",
             "护卫成员",
@@ -8048,91 +7746,6 @@ class XyzwPlugin(Star):
                 return
 
             yield event.plain_result(self._schedule_usage())
-            return
-
-        if subaction in {"开启", "启用", "on"}:
-            if self._notify_requires_bound_group(user_id) and not self.storage.get_notify_group(user_id):
-                yield event.plain_result(
-                    "请先绑定通知群，再开启收车提醒。\n"
-                    "使用 /xyzw 通知 绑定本群"
-                )
-                return
-
-            interval_minutes = self.car_reminder_default_interval_minutes
-            if remaining_tokens and remaining_tokens[0].isdigit():
-                interval_minutes = max(5, min(int(remaining_tokens[0]), 720))
-                remaining_tokens = remaining_tokens[1:]
-
-            selector = " ".join(remaining_tokens).strip()
-            account, error_text = self._resolve_account_or_text(user_id, selector)
-            if not account:
-                yield event.plain_result(error_text or self._schedule_usage())
-                return
-
-            self.storage.upsert_car_reminder(
-                user_id=user_id,
-                account_id=str(account.get("account_id") or ""),
-                interval_minutes=interval_minutes,
-                enabled=True,
-            )
-            yield event.plain_result(
-                "已开启收车提醒。\n"
-                f"- 别名: {account.get('alias')}\n"
-                f"- 间隔: {interval_minutes} 分钟\n"
-                f"- 提醒渠道: {self._notify_mode_label(user_id)}\n"
-                f"- 说明: 后台会按 {self.scheduler_poll_interval_seconds} 秒轮询并在到期时检查。"
-            )
-            return
-
-        if subaction in {"关闭", "禁用", "off"}:
-            selector = " ".join(remaining_tokens).strip()
-            account, error_text = self._resolve_account_or_text(user_id, selector)
-            if not account:
-                yield event.plain_result(error_text or self._schedule_usage())
-                return
-
-            try:
-                self.storage.disable_car_reminder(
-                    user_id=user_id,
-                    account_id=str(account.get("account_id") or ""),
-                )
-            except ValueError as exc:
-                yield event.plain_result(str(exc))
-                return
-
-            yield event.plain_result(
-                "已关闭收车提醒。\n"
-                f"- 别名: {account.get('alias')}"
-            )
-            return
-
-        if subaction in {"检查", "巡检", "check", "run"}:
-            selector = " ".join(remaining_tokens).strip()
-            account, error_text = self._resolve_account_or_text(user_id, selector)
-            if not account:
-                yield event.plain_result(error_text or self._schedule_usage())
-                return
-
-            reminder = self.storage.get_car_reminder(
-                user_id=user_id,
-                account_id=str(account.get("account_id") or ""),
-            )
-            if not reminder or not reminder.get("enabled"):
-                yield event.plain_result(
-                    "当前账号还未开启收车提醒，请先开启。\n"
-                    "/xyzw 定时 收车 开启 [间隔分钟] [别名或ID前缀]"
-                )
-                return
-
-            result = await self._check_car_reminder_once(
-                user_id=user_id,
-                account=account,
-                reminder=reminder,
-                allow_notify=True,
-            )
-            yield event.plain_result(
-                self._format_car_reminder_check_result(account, result)
-            )
             return
 
         yield event.plain_result(self._schedule_usage())

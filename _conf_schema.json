@@ -35,13 +35,6 @@
     "min": 30,
     "max": 600
   },
-  "car_reminder_default_interval_minutes": {
-    "description": "收车提醒的默认检查间隔（分钟）",
-    "type": "int",
-    "default": 15,
-    "min": 5,
-    "max": 720
-  },
   "hangup_reminder_default_interval_minutes": {
     "description": "挂机提醒的默认检查间隔（分钟）",
     "type": "int",
