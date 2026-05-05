@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import { buildCarHelperSnapshot } from "./car-helper-utils.js";
 import { summarizeCars } from "./car-utils.js";
 
 const STUDY_ANSWER_JSON_URL = new URL(
@@ -906,6 +907,8 @@ export async function runManualSmartCarSendTask(
             sendAtText: formatSendTimestamp(sentCar?.sendAt),
             etaText: formatEtaTimestamp(sentCar?.sendAt),
             helperId: lastHelperId || 0,
+            refreshAttempts,
+            superCarRefreshAttempts,
             note: remark,
           });
           sent = true;
@@ -927,6 +930,8 @@ export async function runManualSmartCarSendTask(
           sendAtText: "-",
           etaText: "-",
           helperId: lastHelperId || 0,
+          refreshAttempts,
+          superCarRefreshAttempts,
           note: remark,
         });
         break;
@@ -969,6 +974,8 @@ export async function runManualSmartCarSendTask(
             sendAtText: formatSendTimestamp(sentCar?.sendAt),
             etaText: formatEtaTimestamp(sentCar?.sendAt),
             helperId: lastHelperId || 0,
+            refreshAttempts,
+            superCarRefreshAttempts,
             note: remark,
           });
           sent = true;
@@ -990,6 +997,8 @@ export async function runManualSmartCarSendTask(
           sendAtText: "-",
           etaText: "-",
           helperId: lastHelperId || 0,
+          refreshAttempts,
+          superCarRefreshAttempts,
           note: remark,
         });
         break;
@@ -1016,6 +1025,8 @@ export async function runManualSmartCarSendTask(
           sendAtText: "-",
           etaText: "-",
           helperId: lastHelperId || 0,
+          refreshAttempts,
+          superCarRefreshAttempts,
           note: remark,
         });
         break;

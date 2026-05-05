@@ -1643,6 +1643,8 @@ class XyzwPlugin(Star):
                 lines.append(
                     "   "
                     f"护卫ID: {item.get('helperId') or '-'}"
+                    f" | 刷新: {int(item.get('refreshAttempts') or 0)}"
+                    f" | 超跑刷新: {int(item.get('superCarRefreshAttempts') or 0)}"
                     f" | 备注: {item.get('note') or '-'}"
                 )
 
@@ -2701,12 +2703,24 @@ class XyzwPlugin(Star):
         account: dict[str, Any],
         result: dict[str, Any],
     ) -> str:
+        details = result.get("details", []) or []
+        sent_count = sum(
+            1
+            for item in details
+            if str(item.get("status") or "").startswith("本次发车")
+            or str(item.get("status") or "") == "已经发车"
+        )
+        refresh_count = sum(
+            1
+            for item in details
+            if "刷新" in str(item.get("status") or "")
+        )
         lines = [
             "智能发车结果",
             f"- 别名: {account.get('alias')}",
             f"- 处理车辆: {int(result.get('processedCount') or 0)}",
-            f"- 发车成功: {len(result.get('sentCars') or [])}",
-            f"- 刷新次数: {len(result.get('refreshedCars') or [])}",
+            f"- 发车成功: {sent_count}",
+            f"- 刷新次数: {refresh_count}",
             f"- 失败: {len(result.get('failures') or [])}",
             f"- 发车前未发: {int(result.get('idleCountBefore') or 0)}",
             f"- 发车后未发: {int(result.get('idleCountAfter') or 0)}",
@@ -3386,7 +3400,30 @@ class XyzwPlugin(Star):
                     "data": data,
                 }
 
-            if (data.get("failures") or []) or int(data.get("idleCountAfter") or 0) > 0:
+            details = data.get("details", []) or []
+            sent_count = sum(
+                1
+                for item in details
+                if str(item.get("status") or "").startswith("本次发车")
+                or str(item.get("status") or "") == "已经发车"
+            )
+            refresh_count = sum(
+                1
+                for item in details
+                if "刷新" in str(item.get("status") or "")
+            )
+            failure_count = len(data.get("failures") or [])
+            idle_after = int(data.get("idleCountAfter") or 0)
+
+            if failure_count or idle_after > 0:
+                if sent_count > 0 or refresh_count > 0:
+                    data["message"] = "智能发车已部分完成，但仍有未发车辆或失败项。"
+                    return {
+                        "ok": True,
+                        "status": "success",
+                        "error_message": "",
+                        "data": data,
+                    }
                 data["message"] = "智能发车已执行，但仍有未发车辆或失败项。"
                 return {
                     "ok": False,
