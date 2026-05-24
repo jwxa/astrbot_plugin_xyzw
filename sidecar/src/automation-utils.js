@@ -216,7 +216,7 @@ function shouldSendCar(carInfo, refreshTickets, options = {}) {
   if (Number(refreshTickets || 0) >= 6) {
     return color >= 5 || racingTicketsCount >= 4 || isBigPrize(rewards);
   }
-  return color >= 4 || racingTicketsCount >= 2 || isBigPrize(rewards);
+  return color >= 4 || racingTicketsCount >= 4 || isBigPrize(rewards);
 }
 
 function shouldUseCarHelper(carInfo) {
