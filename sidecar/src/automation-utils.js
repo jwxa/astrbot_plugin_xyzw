@@ -219,6 +219,10 @@ function shouldSendCar(carInfo, refreshTickets, options = {}) {
   return color >= 4 || racingTicketsCount >= 2 || isBigPrize(rewards);
 }
 
+function shouldUseCarHelper(carInfo) {
+  return Number(carInfo?.color || 0) >= 5;
+}
+
 function logSmartSendStage(stage, payload = {}) {
   try {
     console.log(`[smart-send] ${stage} ${JSON.stringify(payload)}`);
@@ -890,14 +894,20 @@ export async function runManualSmartCarSendTask(
         break;
       }
 
-      const helperDecision = await assignHelperId({
-        client,
-        tokenId: "",
-        car: currentCar,
-        helpers: state.helpers || [],
-        helperWhitelist: helper_whitelist,
-        timeoutMs,
-      });
+      const helperDecision = shouldUseCarHelper(currentCar)
+        ? await assignHelperId({
+            client,
+            tokenId: "",
+            car: currentCar,
+            helpers: state.helpers || [],
+            helperWhitelist: helper_whitelist,
+            timeoutMs,
+          })
+        : {
+            helperId: 0,
+            helperSource: "none",
+            helperNote: "非红/金车辆不使用护卫",
+          };
       lastHelperId = helperDecision.helperId;
       lastHelperNote = helperDecision.helperNote;
       const rewardRefreshTickets = countRacingRefreshTickets(currentCar.rewards);
